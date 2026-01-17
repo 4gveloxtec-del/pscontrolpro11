@@ -17,18 +17,29 @@ import {
   Loader2,
   Send,
   Zap,
-  Play
+  Play,
+  Database,
+  AlertCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export function WhatsAppApiConfig() {
   const { user, isAdmin } = useAuth();
-  const { config, isLoading, saveConfig, recordNotificationSent, wasNotificationSent } = useWhatsAppConfig();
+  const { 
+    config, 
+    isLoading, 
+    error: configError, 
+    saveConfig, 
+    updateConnectionStatus,
+    refetch 
+  } = useWhatsAppConfig();
   
   const [showToken, setShowToken] = useState(false);
   const [isCheckingConnection, setIsCheckingConnection] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRunningAutomation, setIsRunningAutomation] = useState(false);
+  const [isSettingUp, setIsSettingUp] = useState(false);
   const [formData, setFormData] = useState({
     api_url: '',
     api_token: '',
@@ -50,18 +61,40 @@ export function WhatsAppApiConfig() {
     }
   }, [config]);
 
+  // Setup tables
+  const handleSetup = async () => {
+    setIsSettingUp(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('setup-whatsapp-automation');
+      
+      if (error) throw error;
+      
+      toast.success('Setup executado! Atualizando...');
+      await refetch();
+    } catch (error: any) {
+      toast.error('Erro no setup: ' + error.message);
+    } finally {
+      setIsSettingUp(false);
+    }
+  };
+
   // Save config
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      saveConfig({
+      const result = await saveConfig({
         api_url: formData.api_url,
         api_token: formData.api_token,
         instance_name: formData.instance_name,
         auto_send_enabled: formData.auto_send_enabled,
         is_connected: formData.is_connected,
       });
-      toast.success('Configuração salva!');
+
+      if (result.error) {
+        toast.error('Erro ao salvar: ' + result.error);
+      } else {
+        toast.success('Configuração salva no banco de dados!');
+      }
     } catch (error: any) {
       toast.error(error.message);
     } finally {
@@ -94,14 +127,12 @@ export function WhatsAppApiConfig() {
 
       if (data.connected) {
         toast.success('WhatsApp conectado!');
-        const newConfig = { ...formData, is_connected: true };
-        setFormData(newConfig);
-        saveConfig(newConfig);
+        setFormData(prev => ({ ...prev, is_connected: true }));
+        await updateConnectionStatus(true);
       } else {
         toast.error('WhatsApp não conectado.');
-        const newConfig = { ...formData, is_connected: false };
-        setFormData(newConfig);
-        saveConfig(newConfig);
+        setFormData(prev => ({ ...prev, is_connected: false }));
+        await updateConnectionStatus(false);
       }
     } catch (error: any) {
       toast.error('Erro: ' + error.message);
@@ -119,32 +150,14 @@ export function WhatsAppApiConfig() {
 
     setIsRunningAutomation(true);
     try {
-      const { data, error } = await supabase.functions.invoke('whatsapp-automation', {
-        body: {
-          sellerId: user?.id,
-          config: {
-            api_url: formData.api_url,
-            api_token: formData.api_token,
-            instance_name: formData.instance_name,
-          },
-        },
-      });
+      const { data, error } = await supabase.functions.invoke('whatsapp-automation');
 
       if (error) throw error;
-
-      // Record sent notifications locally
-      if (data.results) {
-        for (const result of data.results) {
-          if (result.clientId && result.notificationType && result.expirationDate) {
-            recordNotificationSent(result.clientId, result.notificationType, result.expirationDate);
-          }
-        }
-      }
 
       if (data.sent > 0) {
         toast.success(`${data.sent} mensagem(ns) enviada(s)!`);
       } else {
-        toast.info('Nenhum cliente para notificar hoje');
+        toast.info(data.message || 'Nenhum cliente para notificar hoje');
       }
     } catch (error: any) {
       toast.error('Erro: ' + error.message);
@@ -187,6 +200,29 @@ export function WhatsAppApiConfig() {
     );
   }
 
+  // Show setup button if table doesn't exist
+  if (configError?.includes('não existe') || configError?.includes('42P01')) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            As tabelas de automação WhatsApp não existem. Execute o setup para criá-las.
+          </AlertDescription>
+        </Alert>
+        
+        <Button onClick={handleSetup} disabled={isSettingUp} className="w-full">
+          {isSettingUp ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <Database className="h-4 w-4 mr-2" />
+          )}
+          Executar Setup das Tabelas
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Connection Status */}
@@ -212,7 +248,7 @@ export function WhatsAppApiConfig() {
           </p>
           <p className="text-sm text-muted-foreground">
             {formData.is_connected 
-              ? 'Pronto para enviar mensagens' 
+              ? 'Mensagens automáticas ativas' 
               : 'Configure a API para ativar'}
           </p>
         </div>
@@ -228,6 +264,12 @@ export function WhatsAppApiConfig() {
             <RefreshCw className="h-4 w-4" />
           )}
         </Button>
+      </div>
+
+      {/* Database Status Badge */}
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Database className="h-4 w-4" />
+        <span>Dados salvos no banco de dados Supabase</span>
       </div>
 
       {/* Form */}
@@ -276,7 +318,7 @@ export function WhatsAppApiConfig() {
         <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border">
           <div>
             <Label>Envio Automático</Label>
-            <p className="text-sm text-muted-foreground">Habilitar envio automático</p>
+            <p className="text-sm text-muted-foreground">Enviar mensagens automaticamente</p>
           </div>
           <Switch
             checked={formData.auto_send_enabled}
@@ -324,8 +366,8 @@ export function WhatsAppApiConfig() {
             <>
               <li>• Apps Pagos: notifica 30 dias, 3 dias e no vencimento</li>
               <li>• IPTV/Planos: notifica 3 dias e no vencimento</li>
-              <li>• Clique em "Executar" para enviar as mensagens do dia</li>
-              <li>• O tracking é feito localmente no navegador</li>
+              <li>• Cada mensagem é enviada apenas uma vez por ciclo</li>
+              <li>• Histórico salvo no banco de dados</li>
             </>
           )}
         </ul>

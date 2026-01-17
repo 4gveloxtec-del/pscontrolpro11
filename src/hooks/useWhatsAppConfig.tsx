@@ -1,153 +1,227 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 
 interface WhatsAppConfig {
+  id?: string;
+  user_id: string;
   api_url: string;
   api_token: string;
   instance_name: string;
   is_connected: boolean;
   auto_send_enabled: boolean;
+  last_check_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface NotificationRecord {
-  clientId: string;
-  notificationType: string;
-  expirationDate: string;
-  sentAt: string;
+  id: string;
+  client_id: string;
+  seller_id: string;
+  notification_type: string;
+  expiration_cycle_date: string;
+  sent_at: string;
+  sent_via: string;
+  clients?: { name: string };
 }
-
-const STORAGE_KEY_CONFIG = 'whatsapp_api_config';
-const STORAGE_KEY_TRACKING = 'whatsapp_notification_tracking';
 
 export function useWhatsAppConfig() {
   const { user } = useAuth();
   const [config, setConfig] = useState<WhatsAppConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Get storage key with user id
-  const getStorageKey = useCallback((key: string) => {
-    return user?.id ? `${key}_${user.id}` : key;
-  }, [user?.id]);
-
-  // Load config from localStorage
-  useEffect(() => {
+  // Load config from database
+  const fetchConfig = useCallback(async () => {
     if (!user?.id) {
       setIsLoading(false);
       return;
     }
 
     try {
-      const stored = localStorage.getItem(getStorageKey(STORAGE_KEY_CONFIG));
-      if (stored) {
-        setConfig(JSON.parse(stored));
+      setError(null);
+      // Using 'as any' because table may not exist in generated types
+      const { data, error: fetchError } = await (supabase
+        .from('whatsapp_api_config' as any)
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle() as any);
+
+      if (fetchError) {
+        // Table might not exist
+        if (fetchError.code === '42P01') {
+          console.log('WhatsApp config table does not exist yet');
+          setError('Tabela não existe. Execute o setup primeiro.');
+        } else {
+          console.error('Error fetching config:', fetchError);
+          setError(fetchError.message);
+        }
+      } else if (data) {
+        setConfig(data as WhatsAppConfig);
       }
-    } catch (err) {
-      console.error('Error loading WhatsApp config:', err);
+    } catch (err: any) {
+      console.error('Error fetching WhatsApp config:', err);
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
-  }, [user?.id, getStorageKey]);
+  }, [user?.id]);
 
-  // Save config to localStorage
-  const saveConfig = useCallback((newConfig: WhatsAppConfig) => {
-    if (!user?.id) return;
+  useEffect(() => {
+    fetchConfig();
+  }, [fetchConfig]);
+
+  // Save config to database
+  const saveConfig = useCallback(async (newConfig: Omit<WhatsAppConfig, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => {
+    if (!user?.id) return { error: 'User not authenticated' };
+
     try {
-      localStorage.setItem(getStorageKey(STORAGE_KEY_CONFIG), JSON.stringify(newConfig));
-      setConfig(newConfig);
-    } catch (err) {
+      setError(null);
+      
+      if (config?.id) {
+        // Update existing
+        const { error: updateError } = await (supabase
+          .from('whatsapp_api_config' as any)
+          .update({
+            api_url: newConfig.api_url,
+            api_token: newConfig.api_token,
+            instance_name: newConfig.instance_name,
+            is_connected: newConfig.is_connected,
+            auto_send_enabled: newConfig.auto_send_enabled,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', config.id) as any);
+
+        if (updateError) {
+          setError(updateError.message);
+          return { error: updateError.message };
+        }
+
+        setConfig(prev => prev ? { ...prev, ...newConfig } : null);
+      } else {
+        // Insert new
+        const { data, error: insertError } = await (supabase
+          .from('whatsapp_api_config' as any)
+          .insert({
+            user_id: user.id,
+            api_url: newConfig.api_url,
+            api_token: newConfig.api_token,
+            instance_name: newConfig.instance_name,
+            is_connected: newConfig.is_connected,
+            auto_send_enabled: newConfig.auto_send_enabled,
+          })
+          .select()
+          .single() as any);
+
+        if (insertError) {
+          setError(insertError.message);
+          return { error: insertError.message };
+        }
+
+        setConfig(data as WhatsAppConfig);
+      }
+
+      return { error: null };
+    } catch (err: any) {
       console.error('Error saving WhatsApp config:', err);
+      setError(err.message);
+      return { error: err.message };
     }
-  }, [user?.id, getStorageKey]);
+  }, [user?.id, config?.id]);
 
-  // Get sent notifications from localStorage
-  const getSentNotifications = useCallback((): NotificationRecord[] => {
-    if (!user?.id) return [];
+  // Update connection status
+  const updateConnectionStatus = useCallback(async (isConnected: boolean) => {
+    if (!config?.id) return;
+
     try {
-      const stored = localStorage.getItem(getStorageKey(STORAGE_KEY_TRACKING));
-      return stored ? JSON.parse(stored) : [];
+      await (supabase
+        .from('whatsapp_api_config' as any)
+        .update({
+          is_connected: isConnected,
+          last_check_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', config.id) as any);
+
+      setConfig(prev => prev ? { ...prev, is_connected: isConnected } : null);
+    } catch (err) {
+      console.error('Error updating connection status:', err);
+    }
+  }, [config?.id]);
+
+  // Check if notification was already sent
+  const wasNotificationSent = useCallback(async (
+    clientId: string,
+    notificationType: string,
+    expirationDate: string
+  ): Promise<boolean> => {
+    if (!user?.id) return false;
+
+    try {
+      const { data } = await (supabase
+        .from('client_notification_tracking' as any)
+        .select('id')
+        .eq('client_id', clientId)
+        .eq('notification_type', notificationType)
+        .eq('expiration_cycle_date', expirationDate)
+        .maybeSingle() as any);
+
+      return !!data;
+    } catch {
+      return false;
+    }
+  }, [user?.id]);
+
+  // Record that a notification was sent
+  const recordNotificationSent = useCallback(async (
+    clientId: string,
+    notificationType: string,
+    expirationDate: string,
+    sentVia: string = 'manual'
+  ) => {
+    if (!user?.id) return;
+
+    try {
+      await (supabase.from('client_notification_tracking' as any).insert({
+        client_id: clientId,
+        seller_id: user.id,
+        notification_type: notificationType,
+        expiration_cycle_date: expirationDate,
+        sent_via: sentVia,
+      }) as any);
+    } catch (err) {
+      console.error('Error recording notification:', err);
+    }
+  }, [user?.id]);
+
+  // Get sent notifications history
+  const getSentNotifications = useCallback(async (limit = 100): Promise<NotificationRecord[]> => {
+    if (!user?.id) return [];
+
+    try {
+      const { data } = await (supabase
+        .from('client_notification_tracking' as any)
+        .select('*, clients(name)')
+        .eq('seller_id', user.id)
+        .order('sent_at', { ascending: false })
+        .limit(limit) as any);
+
+      return (data || []) as NotificationRecord[];
     } catch {
       return [];
     }
-  }, [user?.id, getStorageKey]);
-
-  // Check if notification was already sent
-  const wasNotificationSent = useCallback((
-    clientId: string,
-    notificationType: string,
-    expirationDate: string
-  ): boolean => {
-    const records = getSentNotifications();
-    return records.some(r => 
-      r.clientId === clientId &&
-      r.notificationType === notificationType &&
-      r.expirationDate === expirationDate
-    );
-  }, [getSentNotifications]);
-
-  // Record that a notification was sent
-  const recordNotificationSent = useCallback((
-    clientId: string,
-    notificationType: string,
-    expirationDate: string
-  ) => {
-    if (!user?.id) return;
-    
-    const records = getSentNotifications();
-    
-    // Check if already exists
-    const exists = records.some(r => 
-      r.clientId === clientId &&
-      r.notificationType === notificationType &&
-      r.expirationDate === expirationDate
-    );
-    
-    if (!exists) {
-      records.push({
-        clientId,
-        notificationType,
-        expirationDate,
-        sentAt: new Date().toISOString(),
-      });
-      
-      // Keep only last 1000 records to prevent localStorage bloat
-      const trimmed = records.slice(-1000);
-      
-      try {
-        localStorage.setItem(getStorageKey(STORAGE_KEY_TRACKING), JSON.stringify(trimmed));
-      } catch (err) {
-        console.error('Error saving notification tracking:', err);
-      }
-    }
-  }, [user?.id, getSentNotifications, getStorageKey]);
-
-  // Clear old tracking records (older than 90 days)
-  const cleanupOldRecords = useCallback(() => {
-    if (!user?.id) return;
-    
-    const records = getSentNotifications();
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 90);
-    
-    const filtered = records.filter(r => new Date(r.sentAt) > cutoffDate);
-    
-    try {
-      localStorage.setItem(getStorageKey(STORAGE_KEY_TRACKING), JSON.stringify(filtered));
-    } catch (err) {
-      console.error('Error cleaning up records:', err);
-    }
-  }, [user?.id, getSentNotifications, getStorageKey]);
-
-  // Cleanup on mount
-  useEffect(() => {
-    cleanupOldRecords();
-  }, [cleanupOldRecords]);
+  }, [user?.id]);
 
   return {
     config,
     isLoading,
+    error,
     saveConfig,
+    updateConnectionStatus,
     wasNotificationSent,
     recordNotificationSent,
     getSentNotifications,
+    refetch: fetchConfig,
   };
 }
