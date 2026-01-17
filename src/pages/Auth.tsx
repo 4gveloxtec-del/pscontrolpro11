@@ -123,16 +123,24 @@ export default function Auth() {
       return;
     }
 
-    const { error } = await signUp(email, registerPassword, registerName, registerWhatsapp);
+    const { error, needsEmailConfirmation } = await signUp(email, registerPassword, registerName, registerWhatsapp);
 
     if (error) {
-      if (error.message.includes('already registered')) {
+      const msg = error.message || '';
+
+      if (msg.includes('already registered')) {
         toast.error('Este email já está cadastrado');
+      } else if (msg.includes('over_email_send_rate_limit')) {
+        toast.error('Aguarde um pouco e tente novamente. Limite de envio de email atingido.');
       } else {
         toast.error(error.message);
       }
     } else {
-      toast.success('Conta criada com sucesso! Você já pode fazer login.');
+      if (needsEmailConfirmation) {
+        toast.success('Conta criada! Agora confirme o email (caixa de entrada ou spam) para conseguir entrar.');
+      } else {
+        toast.success('Conta criada com sucesso! Você já pode fazer login.');
+      }
     }
 
     setIsLoading(false);
