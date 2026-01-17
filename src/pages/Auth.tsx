@@ -55,13 +55,17 @@ export default function Auth() {
     return <Navigate to="/dashboard" replace />;
   }
 
+  const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
+    const email = normalizeEmail(loginEmail);
+
     // Check if user is blocked
-    const { isBlocked: blocked, remainingAttempts: remaining } = await checkLoginAttempt(loginEmail);
-    
+    const { isBlocked: blocked, remainingAttempts: remaining } = await checkLoginAttempt(email);
+
     if (blocked) {
       setIsBlocked(true);
       toast.error('Conta bloqueada temporariamente. Tente novamente em 15 minutos.');
@@ -71,12 +75,12 @@ export default function Auth() {
 
     setRemainingAttempts(remaining);
 
-    const { error } = await signIn(loginEmail, loginPassword);
+    const { error } = await signIn(email, loginPassword);
 
     if (error) {
       // Record failed attempt
-      await recordLoginAttempt(loginEmail, false);
-      
+      await recordLoginAttempt(email, false);
+
       const newRemaining = remaining - 1;
       setRemainingAttempts(newRemaining);
 
@@ -84,15 +88,15 @@ export default function Auth() {
         setIsBlocked(true);
         toast.error('Conta bloqueada após muitas tentativas. Aguarde 15 minutos.');
       } else if (newRemaining <= 3) {
-        toast.error(`Email ou senha incorretos. ${newRemaining} tentativas restantes.`);
+        toast.error(`Email ou senha incorretos (ou email não cadastrado). ${newRemaining} tentativas restantes.`);
       } else if (error.message.includes('Invalid login credentials')) {
-        toast.error('Email ou senha incorretos');
+        toast.error('Email ou senha incorretos (ou email não cadastrado)');
       } else {
         toast.error(error.message);
       }
     } else {
       // Record successful attempt (clears failed attempts)
-      await recordLoginAttempt(loginEmail, true);
+      await recordLoginAttempt(email, true);
       toast.success('Login realizado com sucesso!');
     }
 
@@ -102,6 +106,8 @@ export default function Auth() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+
+    const email = normalizeEmail(registerEmail);
 
     // Validate password strength
     if (!passwordValidation.isValid) {
@@ -117,7 +123,7 @@ export default function Auth() {
       return;
     }
 
-    const { error } = await signUp(registerEmail, registerPassword, registerName, registerWhatsapp);
+    const { error } = await signUp(email, registerPassword, registerName, registerWhatsapp);
 
     if (error) {
       if (error.message.includes('already registered')) {

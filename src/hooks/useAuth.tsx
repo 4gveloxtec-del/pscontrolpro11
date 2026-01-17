@@ -250,14 +250,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = async (email: string, password: string) => {
     // Prevent showing stale cached role/profile during a new login
     clearCachedData();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const normalizedEmail = email.trim().toLowerCase();
+    const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
     return { error: error as Error | null };
   };
 
   const signUp = async (email: string, password: string, fullName: string, whatsapp?: string) => {
     const redirectUrl = `${window.location.origin}/`;
+    const normalizedEmail = email.trim().toLowerCase();
     const { error } = await supabase.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
       options: {
         emailRedirectTo: redirectUrl,
