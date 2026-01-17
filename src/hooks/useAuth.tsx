@@ -37,7 +37,12 @@ interface AuthContextType {
   loading: boolean;
   needsPasswordUpdate: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string, whatsapp?: string) => Promise<{ error: Error | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName: string,
+    whatsapp?: string
+  ) => Promise<{ error: Error | null; needsEmailConfirmation?: boolean }>;
   signOut: () => Promise<void>;
   updatePassword: (newPassword: string) => Promise<{ error: Error | null }>;
   clearPasswordUpdateFlag: () => Promise<void>;
@@ -258,7 +263,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = async (email: string, password: string, fullName: string, whatsapp?: string) => {
     const redirectUrl = `${window.location.origin}/`;
     const normalizedEmail = email.trim().toLowerCase();
-    const { error } = await supabase.auth.signUp({
+
+    const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
       options: {
@@ -266,7 +272,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         data: { full_name: fullName, whatsapp: whatsapp || null }
       }
     });
-    return { error: error as Error | null };
+
+    // If data.session is null, the provider is requiring email confirmation.
+    const needsEmailConfirmation = !!data?.user && !data?.session;
+
+    return { error: error as Error | null, needsEmailConfirmation };
   };
 
   const signOut = async () => {
