@@ -2107,7 +2107,9 @@ export default function Clients() {
                   <div className="space-y-2">
                     <Label>Tipo de Aplicativo</Label>
                     <Select
-                      value={formData.app_type}
+                      value={formData.app_type === 'own' && formData.app_name && resellerApps.some(a => a.name === formData.app_name) 
+                        ? `reseller_${formData.app_name}` 
+                        : formData.app_type}
                       onValueChange={(v) => {
                         // If selecting a reseller app (starts with 'reseller_'), set the app_name too
                         if (v.startsWith('reseller_')) {
@@ -2126,7 +2128,7 @@ export default function Clients() {
                         {resellerApps.length > 0 && (
                           <>
                             <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                              Meus Apps (Revendedor)
+                              Meus Apps (até 3)
                             </div>
                             {resellerApps.map((app) => (
                               <SelectItem key={app.id} value={`reseller_${app.name}`}>
@@ -2139,11 +2141,7 @@ export default function Clients() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      {formData.app_type === 'server' 
-                        ? 'Cliente usa o aplicativo fornecido pelo servidor.'
-                        : formData.app_name 
-                          ? `Cliente usa: ${formData.app_name}`
-                          : 'Cliente usa um app personalizado do revendedor.'}
+                      💡 Configure até 3 apps próprios em Configurações → Meus Aplicativos
                     </p>
                     
                     {/* Show input for custom app name when 'own' is selected but no reseller app chosen */}
@@ -2411,11 +2409,11 @@ export default function Clients() {
                     </div>
                     
                     {/* MAC GerenciaApp - Múltiplos Dispositivos */}
-                    <div className="space-y-3 md:col-span-2 p-4 rounded-lg border border-dashed border-border bg-muted/30">
+                    <div className="space-y-3 md:col-span-2 p-4 rounded-lg border border-green-500/30 bg-green-500/10">
                       <div className="flex items-center justify-between">
-                        <Label className="flex items-center gap-1">
-                          <Monitor className="h-4 w-4 text-muted-foreground" />
-                          Gerenciar MAC (opcional)
+                        <Label className="flex items-center gap-1 text-green-700 dark:text-green-400">
+                          <Monitor className="h-4 w-4" />
+                          Gerencia APP (opcional)
                         </Label>
                         {formData.gerencia_app_devices.length < 5 && (
                           <Button
@@ -2609,11 +2607,11 @@ export default function Clients() {
               )}
 
               {/* Legacy Paid Apps Section (for backward compatibility) */}
-              <div className="space-y-4 p-4 rounded-lg bg-muted/50 border">
+              <div className="space-y-4 p-4 rounded-lg bg-amber-500/5 border border-amber-500/20">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <AppWindow className="h-4 w-4 text-muted-foreground" />
-                    <Label htmlFor="has_paid_apps" className="cursor-pointer">Apps Pagos (legado)</Label>
+                    <AppWindow className="h-4 w-4 text-amber-600" />
+                    <Label htmlFor="has_paid_apps" className="cursor-pointer">Apps Pagos</Label>
                   </div>
                   <Switch
                     id="has_paid_apps"
