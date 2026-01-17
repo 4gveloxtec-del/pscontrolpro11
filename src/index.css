@@ -1,0 +1,351 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@layer base {
+  :root,
+  .theme-netflix {
+    /* Netflix - Cinema Dark Theme (Vermelho intenso, fundo negro cinematográfico) */
+    --background: 0 0% 4%;
+    --foreground: 0 0% 98%;
+
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 0 84% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 10% 12%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 5% 15%;
+    --muted-foreground: 0 0% 55%;
+
+    --accent: 0 84% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 0 5% 15%;
+    --input: 0 5% 12%;
+    --ring: 0 84% 50%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 3%;
+    --sidebar-foreground: 0 0% 75%;
+    --sidebar-primary: 0 84% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 10% 10%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 0 5% 12%;
+    --sidebar-ring: 0 84% 50%;
+  }
+
+  .theme-neon-blue {
+    /* Neon Blue - Cyberpunk Futurista (Azul neon, fundo escuro azulado) */
+    --background: 220 50% 4%;
+    --foreground: 200 100% 98%;
+
+    --card: 220 50% 8%;
+    --card-foreground: 200 100% 98%;
+
+    --popover: 220 50% 8%;
+    --popover-foreground: 200 100% 98%;
+
+    --primary: 200 100% 50%;
+    --primary-foreground: 220 50% 5%;
+
+    --secondary: 220 40% 12%;
+    --secondary-foreground: 200 100% 95%;
+
+    --muted: 220 40% 15%;
+    --muted-foreground: 200 30% 55%;
+
+    --accent: 180 100% 45%;
+    --accent-foreground: 220 50% 5%;
+
+    --destructive: 350 90% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 160 90% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 45 100% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 220 40% 18%;
+    --input: 220 40% 12%;
+    --ring: 200 100% 50%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 220 50% 3%;
+    --sidebar-foreground: 200 40% 70%;
+    --sidebar-primary: 200 100% 50%;
+    --sidebar-primary-foreground: 220 50% 5%;
+    --sidebar-accent: 220 40% 10%;
+    --sidebar-accent-foreground: 200 100% 95%;
+    --sidebar-border: 220 40% 12%;
+    --sidebar-ring: 200 100% 50%;
+  }
+
+  .theme-emerald {
+    /* Emerald - Clean Light Theme (Verde esmeralda, fundo branco elegante) */
+    --background: 150 30% 98%;
+    --foreground: 150 50% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 150 50% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 150 50% 10%;
+
+    --primary: 160 84% 35%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 150 20% 92%;
+    --secondary-foreground: 150 50% 15%;
+
+    --muted: 150 15% 90%;
+    --muted-foreground: 150 20% 45%;
+
+    --accent: 160 84% 35%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 150 20% 85%;
+    --input: 150 20% 92%;
+    --ring: 160 84% 35%;
+
+    --radius: 1rem;
+
+    --sidebar-background: 150 30% 96%;
+    --sidebar-foreground: 150 30% 30%;
+    --sidebar-primary: 160 84% 35%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 150 20% 90%;
+    --sidebar-accent-foreground: 150 50% 15%;
+    --sidebar-border: 150 20% 88%;
+    --sidebar-ring: 160 84% 35%;
+  }
+
+  .theme-purple {
+    /* Purple - Gradient Luxo (Roxo vibrante, gradientes sutis, fundo escuro premium) */
+    --background: 270 40% 5%;
+    --foreground: 280 30% 98%;
+
+    --card: 270 35% 10%;
+    --card-foreground: 280 30% 98%;
+
+    --popover: 270 35% 10%;
+    --popover-foreground: 280 30% 98%;
+
+    --primary: 280 80% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 270 30% 15%;
+    --secondary-foreground: 280 30% 95%;
+
+    --muted: 270 25% 18%;
+    --muted-foreground: 280 20% 55%;
+
+    --accent: 320 80% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 150 70% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 45 100% 55%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 270 25% 20%;
+    --input: 270 30% 15%;
+    --ring: 280 80% 60%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 270 40% 4%;
+    --sidebar-foreground: 280 20% 70%;
+    --sidebar-primary: 280 80% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 270 30% 12%;
+    --sidebar-accent-foreground: 280 30% 95%;
+    --sidebar-border: 270 25% 15%;
+    --sidebar-ring: 280 80% 60%;
+  }
+
+  .theme-orange {
+    /* Orange - Warm Sunset (Laranja quente, fundo creme claro aconchegante) */
+    --background: 35 40% 97%;
+    --foreground: 25 50% 12%;
+
+    --card: 35 30% 100%;
+    --card-foreground: 25 50% 12%;
+
+    --popover: 35 30% 100%;
+    --popover-foreground: 25 50% 12%;
+
+    --primary: 25 95% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 35 30% 90%;
+    --secondary-foreground: 25 50% 15%;
+
+    --muted: 35 25% 88%;
+    --muted-foreground: 25 20% 45%;
+
+    --accent: 15 90% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 45 100% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 35 25% 85%;
+    --input: 35 30% 92%;
+    --ring: 25 95% 50%;
+
+    --radius: 1rem;
+
+    --sidebar-background: 35 35% 95%;
+    --sidebar-foreground: 25 30% 30%;
+    --sidebar-primary: 25 95% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 35 25% 88%;
+    --sidebar-accent-foreground: 25 50% 15%;
+    --sidebar-border: 35 25% 88%;
+    --sidebar-ring: 25 95% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary) / 0.7));
+  }
+
+  .glass {
+    backdrop-filter: blur(12px);
+    background: hsl(var(--card) / 0.8);
+  }
+
+  .glow {
+    box-shadow: 0 0 30px hsl(var(--primary) / 0.3);
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  .animate-pulse-glow {
+    animation: pulseGlow 2s ease-in-out infinite;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.2);
+  }
+  50% {
+    box-shadow: 0 0 40px hsl(var(--primary) / 0.4);
+  }
+}
+

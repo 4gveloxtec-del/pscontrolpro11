@@ -1,0 +1,295 @@
+import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
+import { User, Session } from '@supabase/supabase-js';
+import { supabase } from '@/integrations/supabase/client';
+
+type AppRole = 'admin' | 'seller';
+
+interface Profile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  whatsapp: string | null;
+  subscription_expires_at: string | null;
+  is_permanent: boolean;
+  is_active: boolean;
+  needs_password_update: boolean;
+  created_at: string;
+  tutorial_visto: boolean;
+}
+
+interface AuthContextType {
+  user: User | null;
+  session: Session | null;
+  profile: Profile | null;
+  role: AppRole | null;
+  isAdmin: boolean;
+  isSeller: boolean;
+  loading: boolean;
+  needsPasswordUpdate: boolean;
+  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string, whatsapp?: string) => Promise<{ error: Error | null }>;
+  signOut: () => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<{ error: Error | null }>;
+  clearPasswordUpdateFlag: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Cache keys
+const CACHE_KEYS = {
+  PROFILE: 'cached_profile',
+  ROLE: 'cached_role',
+  USER_ID: 'cached_user_id',
+} as const;
+
+// Cache helpers
+const getCachedData = (userId: string): { profile: Profile | null; role: AppRole | null } => {
+  try {
+    const cachedUserId = localStorage.getItem(CACHE_KEYS.USER_ID);
+    if (cachedUserId !== userId) {
+      return { profile: null, role: null };
+    }
+    
+    const profileStr = localStorage.getItem(CACHE_KEYS.PROFILE);
+    const roleStr = localStorage.getItem(CACHE_KEYS.ROLE);
+    
+    return {
+      profile: profileStr ? JSON.parse(profileStr) : null,
+      role: roleStr as AppRole | null,
+    };
+  } catch {
+    return { profile: null, role: null };
+  }
+};
+
+const setCachedData = (userId: string, profile: Profile | null, role: AppRole | null) => {
+  try {
+    localStorage.setItem(CACHE_KEYS.USER_ID, userId);
+    if (profile) {
+      localStorage.setItem(CACHE_KEYS.PROFILE, JSON.stringify(profile));
+    }
+    if (role) {
+      localStorage.setItem(CACHE_KEYS.ROLE, role);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+};
+
+const clearCachedData = () => {
+  try {
+    localStorage.removeItem(CACHE_KEYS.PROFILE);
+    localStorage.removeItem(CACHE_KEYS.ROLE);
+    localStorage.removeItem(CACHE_KEYS.USER_ID);
+  } catch {
+    // Ignore storage errors
+  }
+};
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [role, setRole] = useState<AppRole | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    // Safety timeout to prevent infinite loading
+    const loadingTimeout = setTimeout(() => {
+      if (isMounted && loading) {
+        console.warn('[Auth] Loading timeout reached, forcing state update');
+        setLoading(false);
+      }
+    }, 5000);
+
+    // Get initial session immediately
+    supabase.auth.getSession()
+      .then(({ data: { session }, error }) => {
+        if (!isMounted) return;
+        
+        if (error) {
+          console.error('[Auth] Error getting session:', error);
+          clearCachedData();
+          setLoading(false);
+          return;
+        }
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          // Load from cache first for instant display
+          const cached = getCachedData(session.user.id);
+          if (cached.profile) {
+            setProfile(cached.profile);
+          }
+          if (cached.role) {
+            setRole(cached.role);
+          }
+          
+          // If we have cached data, show it immediately but still fetch fresh data
+          if (cached.profile && cached.role) {
+            setLoading(false);
+          }
+          
+          fetchUserData(session.user.id, isMounted);
+        } else {
+          clearCachedData();
+          setLoading(false);
+        }
+      })
+      .catch((error) => {
+        console.error('[Auth] Failed to get session:', error);
+        if (isMounted) {
+          clearCachedData();
+          setLoading(false);
+        }
+      });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (!isMounted) return;
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          // Load from cache first
+          const cached = getCachedData(session.user.id);
+          if (cached.profile) {
+            setProfile(cached.profile);
+          }
+          if (cached.role) {
+            setRole(cached.role);
+          }
+          
+          // Use queueMicrotask for faster execution than setTimeout
+          queueMicrotask(() => {
+            if (isMounted) fetchUserData(session.user.id, isMounted);
+          });
+        } else {
+          setProfile(null);
+          setRole(null);
+          clearCachedData();
+          setLoading(false);
+        }
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      clearTimeout(loadingTimeout);
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const fetchUserData = async (userId: string, isMounted: boolean) => {
+    try {
+      const [profileResult, roleResult] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+        supabase.from('user_roles').select('role').eq('user_id', userId).maybeSingle()
+      ]);
+
+      if (!isMounted) return;
+
+      if (profileResult.data) {
+        setProfile(profileResult.data as Profile);
+      }
+
+      if (roleResult.data) {
+        setRole(roleResult.data.role as AppRole);
+      }
+
+      // Update cache with fresh data
+      setCachedData(
+        userId,
+        profileResult.data as Profile | null,
+        roleResult.data?.role as AppRole | null
+      );
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    } finally {
+      if (isMounted) {
+        setLoading(false);
+      }
+    }
+  };
+
+  const signIn = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error as Error | null };
+  };
+
+  const signUp = async (email: string, password: string, fullName: string, whatsapp?: string) => {
+    const redirectUrl = `${window.location.origin}/`;
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: redirectUrl,
+        data: { full_name: fullName, whatsapp: whatsapp || null }
+      }
+    });
+    return { error: error as Error | null };
+  };
+
+  const signOut = async () => {
+    clearCachedData();
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+    setProfile(null);
+    setRole(null);
+  };
+
+  const updatePassword = async (newPassword: string) => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    return { error: error as Error | null };
+  };
+
+  const clearPasswordUpdateFlag = async () => {
+    if (!user) return;
+    
+    await supabase
+      .from('profiles')
+      .update({ needs_password_update: false })
+      .eq('id', user.id);
+    
+    if (profile) {
+      const updatedProfile = { ...profile, needs_password_update: false };
+      setProfile(updatedProfile);
+      setCachedData(user.id, updatedProfile, role);
+    }
+  };
+
+  return (
+    <AuthContext.Provider value={{
+      user,
+      session,
+      profile,
+      role,
+      isAdmin: role === 'admin',
+      isSeller: role === 'seller',
+      loading,
+      needsPasswordUpdate: profile?.needs_password_update ?? false,
+      signIn,
+      signUp,
+      signOut,
+      updatePassword,
+      clearPasswordUpdateFlag
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
