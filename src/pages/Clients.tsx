@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useCrypto } from '@/hooks/useCrypto';
 import { useFingerprint } from '@/hooks/useFingerprint';
@@ -161,7 +161,24 @@ export default function Clients() {
   const { validateForCreate, validateForUpdate, validateForDelete, acquireLock, releaseLock, isLocked } = useClientValidation();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const [filter, setFilter] = useState<FilterType>('all');
+
+  // Debounce search for performance with large datasets
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 150); // 150ms debounce
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [search]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [showPassword, setShowPassword] = useState<string | null>(null);
@@ -247,6 +264,9 @@ export default function Clients() {
       })) as Client[];
     },
     enabled: !!user?.id,
+    staleTime: 1000 * 60 * 2, // 2 minutes - reduce refetches
+    gcTime: 1000 * 60 * 10, // 10 minutes cache
+    refetchOnWindowFocus: false, // Don't refetch on tab focus for performance
   });
 
   // Fetch client IDs that have external apps (paid apps)
@@ -1557,23 +1577,33 @@ export default function Clients() {
     return 'active';
   };
 
-  // Separate archived and active clients
-  const activeClients = clients.filter(c => !c.is_archived);
-  const archivedClients = clients.filter(c => c.is_archived);
+  // Separate archived and active clients - memoized for performance
+  const { activeClients, archivedClients } = useMemo(() => ({
+    activeClients: clients.filter(c => !c.is_archived),
+    archivedClients: clients.filter(c => c.is_archived),
+  }), [clients]);
 
   // Get expired clients that have been contacted (sent message)
-  const expiredCalledClients = activeClients.filter(c => {
+  const expiredCalledClients = useMemo(() => activeClients.filter(c => {
     const status = getClientStatus(c);
     return status === 'expired' && isSent(c.id);
-  });
+  }), [activeClients, isSent]);
 
   // Count expired clients NOT contacted yet
-  const expiredNotCalledCount = activeClients.filter(c => {
+  const expiredNotCalledCount = useMemo(() => activeClients.filter(c => {
     const status = getClientStatus(c);
     return status === 'expired' && !isSent(c.id);
-  }).length;
+  }).length, [activeClients, isSent]);
 
-  const filteredClients = (filter === 'archived' ? archivedClients : activeClients).filter((client) => {
+  // Heavily optimized filtering with useMemo - uses debounced search
+  const filteredClients = useMemo(() => {
+    const baseClients = filter === 'archived' ? archivedClients : activeClients;
+    
+    // Early return if no filters applied
+    if (!debouncedSearch.trim() && categoryFilter === 'all' && serverFilter === 'all' && dnsFilter === 'all' && filter === 'all') {
+      return baseClients;
+    }
+    
     // Normalize search text - remove accents and convert to lowercase
     const normalizeText = (text: string) => {
       return text
@@ -1582,82 +1612,86 @@ export default function Clients() {
         .replace(/[\u0300-\u036f]/g, ''); // Remove diacritics
     };
 
-    const rawSearch = search.trim();
+    const rawSearch = debouncedSearch.trim();
     const searchLower = rawSearch.toLowerCase();
-
     const normalizedSearch = normalizeText(rawSearch);
-    const normalizedName = normalizeText(client.name);
+    const hasSearch = rawSearch.length > 0;
 
-    // Check decrypted credentials if available (safe string fallbacks)
-    const clientCredentials = decryptedCredentials[client.id];
-    const loginMatch = (clientCredentials?.login || '').toLowerCase().includes(searchLower);
-    const passwordMatch = (clientCredentials?.password || '').toLowerCase().includes(searchLower);
-    const login2Match = (clientCredentials?.login_2 || '').toLowerCase().includes(searchLower);
-    const password2Match = (clientCredentials?.password_2 || '').toLowerCase().includes(searchLower);
+    return baseClients.filter((client) => {
+      // Search filter - only apply if there's a search term
+      if (hasSearch) {
+        const normalizedName = normalizeText(client.name);
 
-    // Also check raw login/password for unencrypted data (safe string fallbacks)
-    const rawLoginMatch = (client.login || '').toLowerCase().includes(searchLower);
-    const rawPasswordMatch = (client.password || '').toLowerCase().includes(searchLower);
-    const rawLogin2Match = (client.login_2 || '').toLowerCase().includes(searchLower);
-    const rawPassword2Match = (client.password_2 || '').toLowerCase().includes(searchLower);
+        // Check decrypted credentials if available (safe string fallbacks)
+        const clientCredentials = decryptedCredentials[client.id];
+        const loginMatch = (clientCredentials?.login || '').toLowerCase().includes(searchLower);
+        const passwordMatch = (clientCredentials?.password || '').toLowerCase().includes(searchLower);
+        const login2Match = (clientCredentials?.login_2 || '').toLowerCase().includes(searchLower);
+        const password2Match = (clientCredentials?.password_2 || '').toLowerCase().includes(searchLower);
 
-    // DNS match
-    const dnsMatch = (client.dns || '').toLowerCase().includes(searchLower);
+        // Also check raw login/password for unencrypted data (safe string fallbacks)
+        const rawLoginMatch = (client.login || '').toLowerCase().includes(searchLower);
+        const rawPasswordMatch = (client.password || '').toLowerCase().includes(searchLower);
+        const rawLogin2Match = (client.login_2 || '').toLowerCase().includes(searchLower);
+        const rawPassword2Match = (client.password_2 || '').toLowerCase().includes(searchLower);
 
-    const matchesSearch =
-      normalizedName.includes(normalizedSearch) ||
-      client.phone?.includes(rawSearch) ||
-      (client.email || '').toLowerCase().includes(searchLower) ||
-      dnsMatch ||
-      loginMatch ||
-      passwordMatch ||
-      login2Match ||
-      password2Match ||
-      rawLoginMatch ||
-      rawPasswordMatch ||
-      rawLogin2Match ||
-      rawPassword2Match;
+        // DNS match
+        const dnsMatch = (client.dns || '').toLowerCase().includes(searchLower);
 
-    if (!matchesSearch) return false;
+        const matchesSearch =
+          normalizedName.includes(normalizedSearch) ||
+          client.phone?.includes(rawSearch) ||
+          (client.email || '').toLowerCase().includes(searchLower) ||
+          dnsMatch ||
+          loginMatch ||
+          passwordMatch ||
+          login2Match ||
+          password2Match ||
+          rawLoginMatch ||
+          rawPasswordMatch ||
+          rawLogin2Match ||
+          rawPassword2Match;
 
-    if (!matchesSearch) return false;
+        if (!matchesSearch) return false;
+      }
 
-    // Filter by category
-    if (categoryFilter !== 'all' && client.category !== categoryFilter) {
-      return false;
-    }
+      // Filter by category
+      if (categoryFilter !== 'all' && client.category !== categoryFilter) {
+        return false;
+      }
 
-    // Filter by server
-    if (serverFilter !== 'all' && client.server_id !== serverFilter) {
-      return false;
-    }
+      // Filter by server
+      if (serverFilter !== 'all' && client.server_id !== serverFilter) {
+        return false;
+      }
 
-    // Filter by DNS
-    if (dnsFilter !== 'all' && client.dns !== dnsFilter) {
-      return false;
-    }
+      // Filter by DNS
+      if (dnsFilter !== 'all' && client.dns !== dnsFilter) {
+        return false;
+      }
 
-    // For archived filter, just return all archived clients that match search/category
-    if (filter === 'archived') return true;
+      // For archived filter, just return all archived clients that match search/category
+      if (filter === 'archived') return true;
 
-    const status = getClientStatus(client);
-    switch (filter) {
-      case 'active':
-        return status === 'active';
-      case 'expiring':
-        return status === 'expiring';
-      case 'expired':
-        return status === 'expired';
-      case 'expired_not_called':
-        return status === 'expired' && !isSent(client.id);
-      case 'unpaid':
-        return !client.is_paid;
-      case 'with_paid_apps':
-        return clientsWithPaidAppsSet.has(client.id);
-      default:
-        return true;
-    }
-  });
+      const status = getClientStatus(client);
+      switch (filter) {
+        case 'active':
+          return status === 'active';
+        case 'expiring':
+          return status === 'expiring';
+        case 'expired':
+          return status === 'expired';
+        case 'expired_not_called':
+          return status === 'expired' && !isSent(client.id);
+        case 'unpaid':
+          return !client.is_paid;
+        case 'with_paid_apps':
+          return clientsWithPaidAppsSet.has(client.id);
+        default:
+          return true;
+      }
+    });
+  }, [activeClients, archivedClients, filter, debouncedSearch, categoryFilter, serverFilter, dnsFilter, decryptedCredentials, isSent, clientsWithPaidAppsSet]);
 
   // Sort clients: recently added (last 2 hours) appear at top, then by expiration
   const sortedClients = useMemo(() => {

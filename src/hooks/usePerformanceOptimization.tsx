@@ -8,12 +8,13 @@ interface PerformanceConfig {
 
 const DEFAULT_CONFIG: PerformanceConfig = {
   pageSize: 50,
-  debounceMs: 300,
+  debounceMs: 150, // Reduced for faster response
   maxVisibleItems: 100,
 };
 
 /**
  * Hook for performance optimization with pagination, debouncing, and virtual scrolling support
+ * Optimized for 1000+ items
  */
 export function usePerformanceOptimization<T>(
   items: T[],
@@ -25,8 +26,19 @@ export function usePerformanceOptimization<T>(
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const prevItemsLengthRef = useRef(items.length);
 
-  // Debounce search term
+  // Reset to page 1 when items change significantly (filter change)
+  useEffect(() => {
+    const diff = Math.abs(items.length - prevItemsLengthRef.current);
+    // If more than 10% change in items, reset to page 1
+    if (diff > prevItemsLengthRef.current * 0.1 || items.length < (currentPage - 1) * pageSize) {
+      setCurrentPage(1);
+    }
+    prevItemsLengthRef.current = items.length;
+  }, [items.length, currentPage, pageSize]);
+
+  // Debounce search term with faster response
   useEffect(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -44,12 +56,12 @@ export function usePerformanceOptimization<T>(
     };
   }, [searchTerm, debounceMs]);
 
-  // Calculate total pages
+  // Calculate total pages - memoized
   const totalPages = useMemo(() => {
     return Math.max(1, Math.ceil(items.length / pageSize));
   }, [items.length, pageSize]);
 
-  // Get paginated items
+  // Get paginated items - heavily optimized
   const paginatedItems = useMemo(() => {
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = Math.min(startIndex + pageSize, items.length);
@@ -61,9 +73,12 @@ export function usePerformanceOptimization<T>(
     return paginatedItems.slice(0, maxVisibleItems);
   }, [paginatedItems, maxVisibleItems]);
 
-  // Navigation functions
+  // Navigation functions - stable references
   const goToPage = useCallback((page: number) => {
-    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+    const validPage = Math.max(1, Math.min(page, totalPages));
+    setCurrentPage(validPage);
+    // Scroll to top smoothly when changing pages
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [totalPages]);
 
   const nextPage = useCallback(() => {
@@ -82,6 +97,17 @@ export function usePerformanceOptimization<T>(
   const handleSearch = useCallback((term: string) => {
     setSearchTerm(term);
   }, []);
+
+  // Calculate indices - memoized
+  const startIndex = useMemo(() => 
+    items.length === 0 ? 0 : (currentPage - 1) * pageSize + 1, 
+    [currentPage, pageSize, items.length]
+  );
+  
+  const endIndex = useMemo(() => 
+    Math.min(currentPage * pageSize, items.length), 
+    [currentPage, pageSize, items.length]
+  );
 
   return {
     // State
@@ -106,8 +132,8 @@ export function usePerformanceOptimization<T>(
     // Helpers
     hasNextPage: currentPage < totalPages,
     hasPrevPage: currentPage > 1,
-    startIndex: (currentPage - 1) * pageSize + 1,
-    endIndex: Math.min(currentPage * pageSize, items.length),
+    startIndex,
+    endIndex,
   };
 }
 
