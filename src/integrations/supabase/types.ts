@@ -967,6 +967,7 @@ export type Database = {
           app_type: string
           created_at: string | null
           download_url: string | null
+          downloader_code: string | null
           icon: string | null
           id: string
           is_active: boolean | null
@@ -981,6 +982,7 @@ export type Database = {
           app_type?: string
           created_at?: string | null
           download_url?: string | null
+          downloader_code?: string | null
           icon?: string | null
           id?: string
           is_active?: boolean | null
@@ -995,6 +997,7 @@ export type Database = {
           app_type?: string
           created_at?: string | null
           download_url?: string | null
+          downloader_code?: string | null
           icon?: string | null
           id?: string
           is_active?: boolean | null

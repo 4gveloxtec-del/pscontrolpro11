@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Smartphone, Edit, Trash2, ExternalLink, Handshake, Package, Download } from 'lucide-react';
+import { Plus, Smartphone, Edit, Trash2, ExternalLink, Handshake, Package, Download, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ServerApp {
@@ -37,6 +37,7 @@ interface ServerApp {
   icon: string;
   website_url: string | null;
   download_url: string | null;
+  downloader_code: string | null;
   notes: string | null;
   is_active: boolean;
   created_at: string;
@@ -62,6 +63,7 @@ export function ServerAppsManager({ serverId, serverName, isOpen, onClose }: Ser
     icon: '📱',
     website_url: '',
     download_url: '',
+    downloader_code: '',
     notes: '',
     is_active: true,
   });
@@ -138,6 +140,7 @@ export function ServerAppsManager({ serverId, serverName, isOpen, onClose }: Ser
       icon: '📱',
       website_url: '',
       download_url: '',
+      downloader_code: '',
       notes: '',
       is_active: true,
     });
@@ -152,6 +155,7 @@ export function ServerAppsManager({ serverId, serverName, isOpen, onClose }: Ser
       icon: formData.icon,
       website_url: formData.website_url || null,
       download_url: formData.download_url || null,
+      downloader_code: formData.downloader_code || null,
       notes: formData.notes || null,
       is_active: formData.is_active,
     };
@@ -171,6 +175,7 @@ export function ServerAppsManager({ serverId, serverName, isOpen, onClose }: Ser
       icon: app.icon,
       website_url: app.website_url || '',
       download_url: app.download_url || '',
+      downloader_code: app.downloader_code || '',
       notes: app.notes || '',
       is_active: app.is_active,
     });
@@ -301,6 +306,19 @@ export function ServerAppsManager({ serverId, serverName, isOpen, onClose }: Ser
                   </div>
 
                   <div className="space-y-2">
+                    <Label htmlFor="downloader_code">Código Downloader</Label>
+                    <Input
+                      id="downloader_code"
+                      value={formData.downloader_code}
+                      onChange={(e) => setFormData({ ...formData, downloader_code: e.target.value })}
+                      placeholder="Ex: 12345"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      🔢 Código para baixar via app Downloader (cada servidor pode ter o seu)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label htmlFor="notes">Observações</Label>
                     <Input
                       id="notes"
@@ -426,6 +444,20 @@ function AppCard({
         </div>
       </div>
       <div className="flex items-center gap-1">
+        {app.downloader_code && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-purple-600 hover:text-purple-700"
+            onClick={() => {
+              navigator.clipboard.writeText(app.downloader_code!);
+              toast.success('Código copiado!');
+            }}
+            title={`Código: ${app.downloader_code}`}
+          >
+            <Hash className="h-4 w-4" />
+          </Button>
+        )}
         {app.download_url && (
           <Button
             variant="ghost"
