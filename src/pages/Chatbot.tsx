@@ -375,9 +375,6 @@ export default function Chatbot() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-medium">{rule.name}</h3>
-                          <Badge variant={rule.is_active ? 'default' : 'secondary'}>
-                            {rule.is_active ? 'Ativo' : 'Inativo'}
-                          </Badge>
                           <Badge variant="outline">
                             {COOLDOWN_MODES[rule.cooldown_mode]?.asterisks}
                           </Badge>
@@ -396,7 +393,18 @@ export default function Chatbot() {
                           {rule.response_content.text}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={rule.is_active}
+                            onCheckedChange={async (checked) => {
+                              await updateRule(rule.id, { is_active: checked });
+                            }}
+                          />
+                          <span className={`text-xs font-medium ${rule.is_active ? 'text-green-600' : 'text-muted-foreground'}`}>
+                            {rule.is_active ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
                         <Button variant="ghost" size="icon" onClick={() => openEditRule(rule)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -441,7 +449,7 @@ export default function Chatbot() {
           ) : (
             <div className="grid gap-4 md:grid-cols-2">
               {templates.map((template) => (
-                <Card key={template.id}>
+                <Card key={template.id} className={!template.is_active ? 'opacity-60' : ''}>
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between">
                       <div>
@@ -450,7 +458,20 @@ export default function Chatbot() {
                           <CardDescription>{template.description}</CardDescription>
                         )}
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex items-center gap-2">
+                        {isAdmin && (
+                          <div className="flex items-center gap-2 mr-2">
+                            <Switch
+                              checked={template.is_active}
+                              onCheckedChange={async (checked) => {
+                                await updateTemplate(template.id, { is_active: checked });
+                              }}
+                            />
+                            <span className={`text-xs font-medium ${template.is_active ? 'text-green-600' : 'text-muted-foreground'}`}>
+                              {template.is_active ? 'Ativo' : 'Inativo'}
+                            </span>
+                          </div>
+                        )}
                         {isAdmin && (
                           <>
                             <Button variant="ghost" size="icon" onClick={() => openEditTemplate(template)}>
@@ -482,7 +503,7 @@ export default function Chatbot() {
                         size="sm"
                         className="w-full mt-2"
                         onClick={() => handleUseTemplate(template)}
-                        disabled={isSaving}
+                        disabled={isSaving || !template.is_active}
                       >
                         {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                         Usar Template
