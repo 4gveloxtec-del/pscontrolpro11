@@ -58,6 +58,18 @@ export default function AdminAuth() {
     );
   }
 
+  // Se acabou de logar, pode levar alguns instantes para carregar a role
+  if (user && !role) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          <p className="text-slate-300 text-sm">Verificando permissões...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
       <Card className="w-full max-w-md border-slate-700 bg-slate-800/50 backdrop-blur">

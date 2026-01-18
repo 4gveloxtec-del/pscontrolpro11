@@ -196,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setLoading(false);
           }
           
-          fetchUserData(session.user.id, isMounted);
+          fetchUserData(session.user.id, isMounted, session.access_token);
         } else {
           clearCachedData();
           setLoading(false);
@@ -229,7 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           
           // Use queueMicrotask for faster execution than setTimeout
           queueMicrotask(() => {
-            if (isMounted) fetchUserData(session.user.id, isMounted);
+            if (isMounted) fetchUserData(session.user.id, isMounted, session.access_token);
           });
         } else {
           setProfile(null);
@@ -247,7 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const fetchUserData = async (userId: string, isMounted: boolean) => {
+  const fetchUserData = async (userId: string, isMounted: boolean, accessToken?: string | null) => {
     setIsVerifyingRole(true);
     try {
       const [profileResult, roleResult] = await Promise.all([
@@ -268,11 +268,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let nextRole = (roleResult.data?.role as AppRole | null) ?? null;
 
       // Se o usuário não tem role, tentar corrigir automaticamente
-      if (!nextRole && session?.access_token) {
+      // IMPORTANT: do not depend on React state timing for the access token
+      if (!nextRole && accessToken) {
         console.log('[useAuth] User has no role, attempting to fix...');
         try {
           const { data: fixData, error: fixError } = await supabase.functions.invoke('fix-user-roles', {
-            headers: { Authorization: `Bearer ${session.access_token}` }
+            headers: { Authorization: `Bearer ${accessToken}` }
           });
           
           if (!fixError && fixData?.role) {
