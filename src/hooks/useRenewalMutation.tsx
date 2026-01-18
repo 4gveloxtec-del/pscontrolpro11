@@ -107,12 +107,60 @@ export function useRenewalMutation(userId: string | undefined) {
     data: RenewalData,
     newExpirationDate: string
   ) => {
-    if (!canSendViaApi || !data.clientPhone) {
-      console.log('[Renewal] Cannot send via API - not connected or no phone');
+    console.log('[Renewal] Starting sendRenewalConfirmation...', { 
+      clientName: data.clientName, 
+      phone: data.clientPhone 
+    });
+
+    if (!data.clientPhone) {
+      console.log('[Renewal] No phone number - skipping message');
       return;
     }
 
     try {
+      // Fetch fresh data to avoid stale closures
+      const [instanceResult, configResult, profileResult] = await Promise.all([
+        supabase
+          .from('whatsapp_seller_instances')
+          .select('*')
+          .eq('seller_id', userId!)
+          .single(),
+        supabase
+          .from('whatsapp_global_config')
+          .select('*')
+          .eq('is_active', true)
+          .single(),
+        supabase
+          .from('profiles')
+          .select('company_name, full_name, pix_key')
+          .eq('id', userId!)
+          .single(),
+      ]);
+
+      const instance = instanceResult.data;
+      const config = configResult.data;
+      const profile = profileResult.data;
+
+      console.log('[Renewal] Fetched config:', { 
+        hasInstance: !!instance, 
+        isConnected: instance?.is_connected,
+        isBlocked: instance?.instance_blocked,
+        hasConfig: !!config,
+        configActive: config?.is_active
+      });
+
+      // Check if can send via API
+      const canSend = !!(
+        instance?.is_connected &&
+        !instance?.instance_blocked &&
+        config?.is_active
+      );
+
+      if (!canSend) {
+        console.log('[Renewal] Cannot send via API - not connected or blocked');
+        return;
+      }
+
       // Get renewal template
       const categoryName = typeof data.clientCategory === 'object' 
         ? (data.clientCategory as any)?.name 
@@ -126,6 +174,8 @@ export function useRenewalMutation(userId: string | undefined) {
         .eq('seller_id', userId!)
         .or(`type.ilike.%renov%,name.ilike.%renov%,type.ilike.%confirmacao%,name.ilike.%confirmacao%`)
         .order('created_at', { ascending: false });
+
+      console.log('[Renewal] Templates found:', templates?.length || 0);
 
       // Find best matching template
       let template = templates?.find(t => 
@@ -143,12 +193,14 @@ export function useRenewalMutation(userId: string | undefined) {
       }
 
       if (!template) {
-        console.log('[Renewal] No renewal template found');
+        console.log('[Renewal] No renewal template found - skipping message');
         return;
       }
 
+      console.log('[Renewal] Using template:', template.name);
+
       // Replace variables in template
-      const empresa = sellerProfile?.company_name || sellerProfile?.full_name || '';
+      const empresa = profile?.company_name || profile?.full_name || '';
       const message = template.message
         .replace(/{nome}/gi, data.clientName)
         .replace(/{vencimento}/gi, format(new Date(newExpirationDate), 'dd/MM/yyyy'))
@@ -156,9 +208,11 @@ export function useRenewalMutation(userId: string | undefined) {
         .replace(/{valor}/gi, data.planPrice?.toFixed(2) || '0.00')
         .replace(/{preco}/gi, data.planPrice?.toFixed(2) || '0.00')
         .replace(/{empresa}/gi, empresa)
-        .replace(/{pix}/gi, sellerProfile?.pix_key || '');
+        .replace(/{pix}/gi, profile?.pix_key || '');
 
       const phoneNumber = data.clientPhone.replace(/\D/g, '');
+
+      console.log('[Renewal] Sending message to:', phoneNumber);
 
       // Send via Evolution API
       const { data: apiResponse, error } = await supabase.functions.invoke('evolution-api', {
@@ -168,12 +222,17 @@ export function useRenewalMutation(userId: string | undefined) {
           phone: phoneNumber,
           message: message,
           config: {
-            api_url: globalConfig?.api_url,
-            api_token: globalConfig?.api_token,
-            instance_name: sellerInstance?.instance_name,
+            api_url: config?.api_url,
+            api_token: config?.api_token,
+            instance_name: instance?.instance_name,
           },
         },
       });
+
+      if (error) {
+        console.error('[Renewal] Error invoking function:', error);
+        return;
+      }
 
       if (apiResponse?.blocked) {
         console.error('[Renewal] Instance blocked:', apiResponse.reason);
@@ -182,11 +241,6 @@ export function useRenewalMutation(userId: string | undefined) {
 
       if (!apiResponse?.success) {
         console.error('[Renewal] Message send failed:', apiResponse?.error);
-        return;
-      }
-
-      if (error) {
-        console.error('[Renewal] Error invoking function:', error);
         return;
       }
 
@@ -216,7 +270,7 @@ export function useRenewalMutation(userId: string | undefined) {
       console.error('[Renewal] Failed to send confirmation:', error);
       // Don't show error to user - renewal was successful, message is optional
     }
-  }, [canSendViaApi, userId, sellerInstance?.instance_name, sellerProfile]);
+  }, [userId]);
 
   // Helper to calculate new expiration date
   const calculateNewExpiration = useCallback((currentExpiration: string, durationDays: number): string => {
