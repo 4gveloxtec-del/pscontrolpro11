@@ -252,6 +252,7 @@ export type Database = {
       }
       clients: {
         Row: {
+          additional_servers: Json | null
           app_name: string | null
           app_type: string | null
           archived_at: string | null
@@ -297,6 +298,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          additional_servers?: Json | null
           app_name?: string | null
           app_type?: string | null
           archived_at?: string | null
@@ -342,6 +344,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          additional_servers?: Json | null
           app_name?: string | null
           app_type?: string | null
           archived_at?: string | null

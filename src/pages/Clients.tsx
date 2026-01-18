@@ -45,7 +45,7 @@ import { cn } from '@/lib/utils';
 import { SendMessageDialog } from '@/components/SendMessageDialog';
 import { PlanSelector } from '@/components/PlanSelector';
 import { SharedCreditPicker, SharedCreditSelection } from '@/components/SharedCreditPicker';
-import { DnsFieldsSection, SharedCreditsSection, AppsSection } from '@/components/client-form';
+import { DnsFieldsSection, SharedCreditsSection, AppsSection, AdditionalServersSection } from '@/components/client-form';
 import { Badge } from '@/components/ui/badge';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { ClientExternalApps, ClientExternalAppsDisplay } from '@/components/ClientExternalApps';
@@ -207,8 +207,8 @@ export default function Clients() {
   const [bulkMessageQueue, setBulkMessageQueue] = useState<Client[]>([]);
   const [bulkMessageIndex, setBulkMessageIndex] = useState(0);
   const isBulkMessaging = bulkMessageQueue.length > 0;
-  // Toggle for second server section
-  const [showServer2, setShowServer2] = useState(false);
+  // State for additional servers (dynamic)
+  const [additionalServers, setAdditionalServers] = useState<{ server_id: string; server_name: string; login: string; password: string }[]>([]);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -1284,7 +1284,7 @@ export default function Clients() {
     setSelectedSharedCredit(null);
     setExternalApps([]);
     setPremiumAccounts([]);
-    setShowServer2(false);
+    setAdditionalServers([]);
   };
 
   const handlePlanChange = (planId: string) => {
@@ -1371,6 +1371,32 @@ export default function Clients() {
       }
     }
 
+    // Encrypt additional servers credentials
+    const encryptedAdditionalServers = await Promise.all(
+      additionalServers.map(async (server) => {
+        if (!server.server_id) return null;
+        try {
+          const encryptedLogin = server.login ? await encrypt(server.login) : null;
+          const encryptedPassword = server.password ? await encrypt(server.password) : null;
+          return {
+            server_id: server.server_id,
+            server_name: server.server_name,
+            login: encryptedLogin,
+            password: encryptedPassword,
+          };
+        } catch (error) {
+          console.error('Encryption error for additional server:', error);
+          return {
+            server_id: server.server_id,
+            server_name: server.server_name,
+            login: server.login || null,
+            password: server.password || null,
+          };
+        }
+      })
+    );
+    const validAdditionalServers = encryptedAdditionalServers.filter(Boolean);
+
     // For Contas Premium, calculate total price from premium accounts
     const isPremiumCategory = formData.category === 'Contas Premium';
     const premiumTotalPrice = isPremiumCategory 
@@ -1420,6 +1446,7 @@ export default function Clients() {
       gerencia_app_devices: formData.gerencia_app_devices.filter(d => d.mac.trim() !== ''),
       app_name: formData.app_name || null,
       app_type: formData.app_type || 'server',
+      additional_servers: validAdditionalServers,
     };
 
     if (editingClient) {
@@ -1528,8 +1555,34 @@ export default function Clients() {
       app_name: (client as any).app_name || '',
       app_type: (client as any).app_type || 'server',
     });
-    // Show server 2 section if client has a second server configured
-    setShowServer2(!!client.server_id_2);
+    // Load and decrypt additional servers if client has them
+    const clientAdditionalServers = (client as any).additional_servers || [];
+    if (Array.isArray(clientAdditionalServers) && clientAdditionalServers.length > 0) {
+      const decryptedServers = await Promise.all(
+        clientAdditionalServers.map(async (server: { server_id: string; server_name: string; login: string | null; password: string | null }) => {
+          try {
+            const decryptedLogin = server.login ? await decrypt(server.login) : '';
+            const decryptedPassword = server.password ? await decrypt(server.password) : '';
+            return {
+              server_id: server.server_id,
+              server_name: server.server_name,
+              login: decryptedLogin,
+              password: decryptedPassword,
+            };
+          } catch (error) {
+            return {
+              server_id: server.server_id,
+              server_name: server.server_name,
+              login: server.login || '',
+              password: server.password || '',
+            };
+          }
+        })
+      );
+      setAdditionalServers(decryptedServers);
+    } else {
+      setAdditionalServers([]);
+    }
     setIsDialogOpen(true);
   };
 
@@ -2360,93 +2413,19 @@ export default function Clients() {
                       />
                     </div>
                     
-                    {/* Second Server Section - Optional with Toggle */}
-                    <div className="md:col-span-2">
-                      {!showServer2 ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowServer2(true)}
-                          className="w-full border-dashed border-border hover:border-primary/50 hover:bg-primary/5 text-muted-foreground"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Adicionar Segundo Servidor
-                        </Button>
-                      ) : (
-                        <div className="space-y-3 p-4 rounded-lg border border-border bg-card">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className="p-1.5 rounded-md bg-primary/10">
-                                <Server className="h-4 w-4 text-primary" />
-                              </div>
-                              <Label className="text-sm font-medium">Segundo Servidor</Label>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setShowServer2(false);
-                                setFormData({ ...formData, server_id_2: '', server_name_2: '', login_2: '', password_2: '' });
-                              }}
-                              className="h-7 px-2 text-muted-foreground hover:text-destructive"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label>Servidor 2</Label>
-                              <Select
-                                value={formData.server_id_2 || 'none'}
-                                onValueChange={handleServer2Change}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Selecione..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">Nenhum</SelectItem>
-                                  {activeServers.map((server) => (
-                                    <SelectItem key={server.id} value={server.id}>
-                                      {server.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            
-                            {formData.server_id_2 && (
-                              <>
-                                <div className="space-y-2">
-                                  <Label htmlFor="login_2" className="flex items-center gap-1">
-                                    Login (Servidor 2)
-                                    <Lock className="h-3 w-3 text-muted-foreground" />
-                                  </Label>
-                                  <Input
-                                    id="login_2"
-                                    value={formData.login_2}
-                                    onChange={(e) => setFormData({ ...formData, login_2: e.target.value })}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="password_2" className="flex items-center gap-1">
-                                    Senha (Servidor 2)
-                                    <Lock className="h-3 w-3 text-muted-foreground" />
-                                  </Label>
-                                  <Input
-                                    id="password_2"
-                                    value={formData.password_2}
-                                    onChange={(e) => setFormData({ ...formData, password_2: e.target.value })}
-                                  />
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    {/* Additional Servers Section */}
+                    <AdditionalServersSection
+                      servers={activeServers}
+                      additionalServers={additionalServers}
+                      onChange={setAdditionalServers}
+                      legacyServer2={{
+                        server_id_2: formData.server_id_2,
+                        server_name_2: formData.server_name_2,
+                        login_2: formData.login_2,
+                        password_2: formData.password_2,
+                      }}
+                      onLegacyServer2Change={(data) => setFormData({ ...formData, ...data })}
+                    />
                     
                     {/* MAC GerenciaApp - Múltiplos Dispositivos */}
                     <div className="space-y-3 md:col-span-2 p-4 rounded-lg border border-green-500/30 bg-green-500/10">
