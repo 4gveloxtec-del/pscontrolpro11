@@ -2,17 +2,23 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useEffect } from "react";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { PrivacyModeProvider } from "@/hooks/usePrivacyMode";
 import { MenuStyleProvider } from "@/hooks/useMenuStyle";
+import { AdminManifestProvider } from "@/hooks/useAdminManifest";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { AdminLayout } from "@/components/layout/AdminLayout";
 import { ExpirationNotificationProvider } from "@/components/ExpirationNotificationProvider";
 import { SystemAccessRequired, AdminOnly, SellerOnly } from "@/components/ProtectedRoute";
+import { AdminProtectedRoute } from "@/components/AdminProtectedRoute";
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
+import AdminAuth from "./pages/AdminAuth";
+import AdminAccessDenied from "./pages/AdminAccessDenied";
+import AdminDashboard from "./pages/AdminDashboard";
 import AccessDenied from "./pages/AccessDenied";
 import Dashboard from "./pages/Dashboard";
 import Clients from "./pages/Clients";
@@ -84,6 +90,7 @@ function PasswordUpdateGuard({ children }: { children: React.ReactNode }) {
 const AppRoutes = () => {
   return (
     <BrowserRouter>
+      <AdminManifestProvider>
       <Routes>
         <Route path="/" element={<Navigate to="/auth" replace />} />
         <Route path="/landing" element={<Landing />} />
@@ -92,6 +99,28 @@ const AppRoutes = () => {
         <Route path="/force-password-update" element={<ForcePasswordUpdate />} />
         {/* Redirect old shared-panels route to servers */}
         <Route path="/shared-panels" element={<Navigate to="/servers" replace />} />
+        
+        {/* ============ ADMIN PWA ROUTES ============ */}
+        {/* Login do Admin */}
+        <Route path="/admin" element={<AdminAuth />} />
+        <Route path="/admin/access-denied" element={<AdminAccessDenied />} />
+        
+        {/* Rotas protegidas do Admin */}
+        <Route element={
+          <AdminProtectedRoute>
+            <AdminLayout />
+          </AdminProtectedRoute>
+        }>
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
+          <Route path="/admin/sellers" element={<Sellers />} />
+          <Route path="/admin/reports" element={<Reports />} />
+          <Route path="/admin/backup" element={<Backup />} />
+          <Route path="/admin/server-icons" element={<ServerIcons />} />
+          <Route path="/admin/server-templates" element={<AdminServerTemplates />} />
+          <Route path="/admin/tutorials" element={<Tutorials />} />
+          <Route path="/admin/settings" element={<Settings />} />
+        </Route>
+        {/* ============ FIM ADMIN PWA ROUTES ============ */}
         
         {/* Protected routes - require system access (admin or seller) */}
         <Route element={
@@ -118,7 +147,7 @@ const AppRoutes = () => {
           <Route path="/message-history" element={<MessageHistory />} />
           <Route path="/external-apps" element={<ExternalApps />} />
           
-          {/* Admin-only routes */}
+          {/* Admin-only routes (legacy - mantidos para compatibilidade) */}
           <Route path="/sellers" element={
             <AdminOnly><Sellers /></AdminOnly>
           } />
@@ -137,6 +166,7 @@ const AppRoutes = () => {
         </Route>
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </AdminManifestProvider>
     </BrowserRouter>
   );
 };
