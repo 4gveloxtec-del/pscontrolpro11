@@ -45,6 +45,7 @@ import { cn } from '@/lib/utils';
 import { SendMessageDialog } from '@/components/SendMessageDialog';
 import { PlanSelector } from '@/components/PlanSelector';
 import { SharedCreditPicker, SharedCreditSelection } from '@/components/SharedCreditPicker';
+import { DnsFieldsSection, SharedCreditsSection, AppsSection } from '@/components/client-form';
 import { Badge } from '@/components/ui/badge';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { ClientExternalApps, ClientExternalAppsDisplay } from '@/components/ClientExternalApps';
@@ -373,7 +374,7 @@ export default function Clients() {
         .eq('is_active', true)
         .order('name');
       if (error) throw error;
-      return (data || []) as unknown as { id: string; name: string; icon: string; app_type: 'own' | 'partnership'; }[];
+      return (data || []) as unknown as { id: string; name: string; icon: string; app_type: 'own' | 'partnership'; website_url: string | null; is_active: boolean; }[];
     },
     enabled: !!formData.server_id,
   });
@@ -2077,19 +2078,11 @@ export default function Clients() {
                   </Popover>
                 </div>
 
-                {/* DNS Field */}
-                <div className="space-y-2">
-                  <Label htmlFor="dns">DNS (opcional)</Label>
-                  <Input
-                    id="dns"
-                    value={formData.dns}
-                    onChange={(e) => setFormData({ ...formData, dns: e.target.value })}
-                    placeholder="Ex: dns.exemplo.com"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    DNS utilizado pelo cliente. Útil para rastrear problemas de conexão.
-                  </p>
-                </div>
+                {/* DNS Fields - Dynamic with add/remove */}
+                <DnsFieldsSection
+                  dns={formData.dns}
+                  onChange={(dns) => setFormData({ ...formData, dns })}
+                />
 
                 {/* Plan Select - Not for Contas Premium */}
                 {formData.category !== 'Contas Premium' && (
@@ -2171,109 +2164,7 @@ export default function Clients() {
                   </div>
                 )}
 
-                {/* App Type - Server app or reseller apps (only for IPTV/P2P) */}
-                {(formData.category === 'IPTV' || formData.category === 'P2P') && (
-                  <div className="space-y-2">
-                    <Label>Tipo de Aplicativo</Label>
-                    <Select
-                      value={
-                        formData.app_name && serverApps.some(a => a.name === formData.app_name)
-                          ? `serverapp_${formData.app_name}`
-                          : formData.app_type === 'own' && formData.app_name && resellerApps.some(a => a.name === formData.app_name) 
-                            ? `reseller_${formData.app_name}` 
-                            : formData.app_type
-                      }
-                      onValueChange={(v) => {
-                        // If selecting a server app (starts with 'serverapp_')
-                        if (v.startsWith('serverapp_')) {
-                          const appName = v.replace('serverapp_', '');
-                          setFormData({ ...formData, app_type: 'server', app_name: appName });
-                        }
-                        // If selecting a reseller app (starts with 'reseller_'), set the app_name too
-                        else if (v.startsWith('reseller_')) {
-                          const appName = v.replace('reseller_', '');
-                          setFormData({ ...formData, app_type: 'own', app_name: appName });
-                        } else if (v === 'server') {
-                          setFormData({ ...formData, app_type: 'server', app_name: '' });
-                        } else {
-                          setFormData({ ...formData, app_type: v as 'server' | 'own', app_name: v === 'server' ? '' : formData.app_name });
-                        }
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione o tipo de app" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="server">📡 App Padrão do Servidor</SelectItem>
-                        
-                        {/* Server Apps - Own */}
-                        {serverApps.filter(a => a.app_type === 'own').length > 0 && (
-                          <>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t mt-1 pt-2">
-                              📦 Apps Próprios ({selectedServer?.name})
-                            </div>
-                            {serverApps.filter(a => a.app_type === 'own').map((app) => (
-                              <SelectItem key={app.id} value={`serverapp_${app.name}`}>
-                                {app.icon} {app.name}
-                              </SelectItem>
-                            ))}
-                          </>
-                        )}
-                        
-                        {/* Server Apps - Partnership */}
-                        {serverApps.filter(a => a.app_type === 'partnership').length > 0 && (
-                          <>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t mt-1 pt-2">
-                              🤝 Apps Parceria ({selectedServer?.name})
-                            </div>
-                            {serverApps.filter(a => a.app_type === 'partnership').map((app) => (
-                              <SelectItem key={app.id} value={`serverapp_${app.name}`}>
-                                {app.icon} {app.name}
-                              </SelectItem>
-                            ))}
-                          </>
-                        )}
-                        
-                        {/* Reseller Apps */}
-                        {resellerApps.length > 0 && (
-                          <>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground border-t mt-1 pt-2">
-                              🏪 Meus Apps Globais
-                            </div>
-                            {resellerApps.map((app) => (
-                              <SelectItem key={app.id} value={`reseller_${app.name}`}>
-                                {app.icon} {app.name}
-                              </SelectItem>
-                            ))}
-                          </>
-                        )}
-                        
-                        <div className="border-t mt-1 pt-1">
-                          <SelectItem value="own">📱 Outro App (Personalizado)</SelectItem>
-                        </div>
-                      </SelectContent>
-                    </Select>
-                    
-                    {serverApps.length === 0 && formData.server_id && (
-                      <p className="text-xs text-muted-foreground">
-                        💡 Cadastre apps próprios ou parceria em Servidores → Apps
-                      </p>
-                    )}
-                    
-                    {/* Show input for custom app name when 'own' is selected but no app chosen */}
-                    {formData.app_type === 'own' && !resellerApps.some(a => a.name === formData.app_name) && !serverApps.some(a => a.name === formData.app_name) && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Nome do Aplicativo</Label>
-                        <Input
-                          value={formData.app_name}
-                          onChange={(e) => setFormData({ ...formData, app_name: e.target.value })}
-                          placeholder="Ex: IPTV Smarters, Sparkle TV..."
-                          className="h-9"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* App Type selection moved to AppsSection component below */}
 
                 {/* Screen Selection for Credit-Based Servers */}
                 {formData.category !== 'Contas Premium' && formData.server_id && selectedServer?.is_credit_based && (
@@ -2725,9 +2616,9 @@ export default function Clients() {
                 )}
               </div>
 
-              {/* Shared Credit Picker - Show for IPTV/P2P/SSH/Revendedor (both new and existing clients) */}
-              {formData.server_id && (formData.category === 'IPTV' || formData.category === 'P2P' || formData.category === 'SSH' || formData.category === 'Revendedor') && user && (
-                <SharedCreditPicker
+              {/* Shared Credits Section - Toggle with collapsible */}
+              {formData.server_id && user && (
+                <SharedCreditsSection
                   sellerId={user.id}
                   category={formData.category}
                   serverId={formData.server_id}
@@ -2737,123 +2628,38 @@ export default function Clients() {
                 />
               )}
 
-              {/* Apps Externos Section */}
+              {/* Apps Section - Reorganized with server vs reseller */}
               {user && (
-                <div className="space-y-4 p-4 rounded-lg bg-violet-500/5 border border-violet-500/20">
-                  <ClientExternalApps
-                    clientId={editingClient?.id}
-                    sellerId={user.id}
-                    onChange={setExternalApps}
-                    initialApps={externalApps}
-                  />
-                </div>
+                <AppsSection
+                  category={formData.category}
+                  serverId={formData.server_id || undefined}
+                  serverName={formData.server_name || undefined}
+                  serverApps={serverApps}
+                  resellerApps={resellerApps}
+                  appType={formData.app_type}
+                  appName={formData.app_name}
+                  onAppChange={(appType, appName) => setFormData({ ...formData, app_type: appType as 'server' | 'own', app_name: appName })}
+                  clientId={editingClient?.id}
+                  sellerId={user.id}
+                  externalApps={externalApps}
+                  onExternalAppsChange={setExternalApps}
+                  hasPaidApps={formData.has_paid_apps}
+                  paidAppsData={{
+                    email: formData.paid_apps_email,
+                    password: formData.paid_apps_password,
+                    duration: formData.paid_apps_duration,
+                    expiration: formData.paid_apps_expiration,
+                  }}
+                  onPaidAppsChange={(hasPaidApps, data) => setFormData({ 
+                    ...formData, 
+                    has_paid_apps: hasPaidApps,
+                    paid_apps_email: data.email,
+                    paid_apps_password: data.password,
+                    paid_apps_duration: data.duration,
+                    paid_apps_expiration: data.expiration,
+                  })}
+                />
               )}
-
-              {/* Legacy Paid Apps Section (for backward compatibility) */}
-              <div className="space-y-4 p-4 rounded-lg bg-amber-500/5 border border-amber-500/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AppWindow className="h-4 w-4 text-amber-600" />
-                    <Label htmlFor="has_paid_apps" className="cursor-pointer">Apps Pagos</Label>
-                  </div>
-                  <Switch
-                    id="has_paid_apps"
-                    checked={formData.has_paid_apps}
-                    onCheckedChange={(checked) => setFormData({ ...formData, has_paid_apps: checked, paid_apps_duration: '', paid_apps_expiration: '' })}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Para novos cadastros, use a seção "Apps Externos" acima que possui mais recursos.
-                </p>
-                
-                {formData.has_paid_apps && (
-                  <div className="space-y-4 pt-2">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>E-mail ou MAC do App</Label>
-                        <Input
-                          value={formData.paid_apps_email}
-                          onChange={(e) => setFormData({ ...formData, paid_apps_email: e.target.value })}
-                          placeholder="email@exemplo.com ou AA:BB:CC:DD:EE:FF"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Senha ou Código</Label>
-                        <Input
-                          value={formData.paid_apps_password}
-                          onChange={(e) => setFormData({ ...formData, paid_apps_password: e.target.value })}
-                          placeholder="Senha, código ou chave de ativação"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Nome do Aplicativo (opcional)</Label>
-                        <Input
-                          value={formData.app_name}
-                          onChange={(e) => setFormData({ ...formData, app_name: e.target.value })}
-                          placeholder="Ex: Netflix, Spotify, IPTV Smarters..."
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Duração do App</Label>
-                        <Select
-                          value={formData.paid_apps_duration}
-                          onValueChange={handlePaidAppsDurationChange}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione a duração" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="3_months">3 Meses</SelectItem>
-                            <SelectItem value="6_months">6 Meses</SelectItem>
-                            <SelectItem value="1_year">1 Ano</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Vencimento do App</Label>
-                        <Popover
-                          open={paidAppsExpirationPopoverOpen}
-                          onOpenChange={setPaidAppsExpirationPopoverOpen}
-                          modal={false}
-                        >
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant="outline"
-                              className={cn(
-                                "w-full justify-start text-left font-normal",
-                                !formData.paid_apps_expiration && "text-muted-foreground"
-                              )}
-                              type="button"
-                            >
-                              <CalendarIcon className="mr-2 h-4 w-4" />
-                              {formData.paid_apps_expiration 
-                                ? format(new Date(formData.paid_apps_expiration), "dd/MM/yyyy", { locale: ptBR })
-                                : "Selecione a data"}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0 z-[100]" align="start" sideOffset={5}>
-                            <CalendarPicker
-                              mode="single"
-                              selected={formData.paid_apps_expiration ? new Date(formData.paid_apps_expiration) : undefined}
-                              onSelect={(date) => {
-                                if (date) {
-                                  setFormData({ ...formData, paid_apps_expiration: format(date, "yyyy-MM-dd") });
-                                  setPaidAppsExpirationPopoverOpen(false);
-                                }
-                              }}
-                              initialFocus
-                              locale={ptBR}
-                              className="p-3 pointer-events-auto"
-                            />
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
 
               <div className="space-y-2">
                 <Label htmlFor="notes">Observações</Label>
