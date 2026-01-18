@@ -646,13 +646,29 @@ serve(async (req) => {
 
     // Diagnostic endpoint: GET request returns debug info
     if (req.method === "GET") {
-      const url = new URL(req.url);
+      // Parse URL - handle edge case where ? is encoded as %3F
+      let rawUrl = req.url;
+      // If %3F exists (encoded ?), decode it for proper parsing
+      if (rawUrl.includes("%3F")) {
+        rawUrl = rawUrl.replace(/%3F/g, "?").replace(/%26/g, "&").replace(/%3D/g, "=");
+      }
+      
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(rawUrl);
+      } catch {
+        parsedUrl = new URL(rawUrl, "https://placeholder.co");
+      }
 
-      const testApi = url.searchParams.get("test_api") === "true";
-      const testSend = url.searchParams.get("test_send") === "true";
-      const testPhone = url.searchParams.get("phone") || "";
-      const testText = url.searchParams.get("text") || "Teste do chatbot";
-      const testInstance = url.searchParams.get("instance") || "";
+      const testApi = parsedUrl.searchParams.get("test_api") === "true";
+      const testSend = parsedUrl.searchParams.get("test_send") === "true";
+      const testPhone = parsedUrl.searchParams.get("phone") || "";
+      const testText = parsedUrl.searchParams.get("text") || "Teste do chatbot";
+      const testInstance = parsedUrl.searchParams.get("instance") || "";
+
+      console.log(`[Diag] Raw URL: ${req.url}`);
+      console.log(`[Diag] Parsed URL: ${rawUrl}`);
+      console.log(`[Diag] test_api=${testApi}, test_send=${testSend}, phone=${testPhone}, instance=${testInstance}`);
 
       const { data: instances } = await supabase
         .from("whatsapp_seller_instances")
@@ -768,12 +784,13 @@ serve(async (req) => {
         JSON.stringify(
           {
             status: "diagnostic",
+            debug_raw_url: req.url,
             query: {
-              test_api: url.searchParams.get("test_api"),
-              test_send: url.searchParams.get("test_send"),
-              instance: url.searchParams.get("instance"),
-              phone: Boolean(url.searchParams.get("phone")),
-              text: url.searchParams.get("text") ? "(provided)" : "(default)",
+              test_api: testApi,
+              test_send: testSend,
+              instance: testInstance || null,
+              phone: testPhone ? "(provided)" : null,
+              text: testText !== "Teste do chatbot" ? "(custom)" : "(default)",
             },
             instances: instances || [],
             globalConfig: globalConfig
