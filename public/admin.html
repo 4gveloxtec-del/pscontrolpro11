@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Painel ADM - Sistema de Gestão</title>
+    <meta name="description" content="Painel administrativo para gestão de vendedores e sistema" />
+    <meta name="author" content="PSControl Admin" />
+    <meta name="theme-color" content="#1e40af" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ADM" />
+
+    <!-- PWA Manifest - Admin específico -->
+    <link rel="manifest" href="/manifest-admin.json" />
+    <link rel="apple-touch-icon" href="/admin-icon-192.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Painel ADM - Sistema de Gestão" />
+    <meta property="og:description" content="Painel administrativo para gestão de vendedores e sistema" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/admin-icon-512.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/admin-icon-512.png" />
+    
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0f172a;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .loader {
+        width: 48px;
+        height: 48px;
+        border: 4px solid #1e40af;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="loader"></div>
+    <script>
+      // Redireciona para a rota /admin do SPA
+      window.location.replace('/admin');
+    </script>
+  </body>
+</html>
