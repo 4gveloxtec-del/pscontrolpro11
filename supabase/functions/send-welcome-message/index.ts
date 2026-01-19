@@ -12,6 +12,64 @@ interface GlobalConfig {
   is_active: boolean;
 }
 
+// AES-256-GCM decryption - same logic as crypto Edge Function
+const ENCRYPTION_KEY = Deno.env.get('ENCRYPTION_KEY');
+
+async function getDecryptionKey(): Promise<CryptoKey> {
+  if (!ENCRYPTION_KEY) {
+    throw new Error('Encryption key not configured');
+  }
+  
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+  
+  return await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+}
+
+async function decryptValue(ciphertext: string): Promise<string> {
+  try {
+    if (!ENCRYPTION_KEY || !ciphertext) {
+      return ciphertext || '';
+    }
+    
+    // Check if the data looks like base64-encoded encrypted data
+    const base64Regex = /^[A-Za-z0-9+/]+=*$/;
+    if (!base64Regex.test(ciphertext) || ciphertext.length < 20) {
+      // Data doesn't look encrypted, return as-is
+      return ciphertext;
+    }
+    
+    const key = await getDecryptionKey();
+    const combined = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+    
+    // Validate minimum length (12 bytes IV + at least some encrypted data)
+    if (combined.length < 13) {
+      return ciphertext;
+    }
+    
+    const iv = combined.slice(0, 12);
+    const encrypted = combined.slice(12);
+    
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encrypted
+    );
+    
+    return new TextDecoder().decode(decrypted);
+  } catch (error) {
+    console.log('[decrypt] Failed to decrypt, returning original value:', error);
+    // If decryption fails, the data might not be encrypted - return original
+    return ciphertext;
+  }
+}
+
 // Send message via Evolution API
 async function sendEvolutionMessage(
   globalConfig: GlobalConfig,
@@ -129,6 +187,14 @@ serve(async (req) => {
       );
     }
 
+    // CRITICAL: Decrypt login and password in backend before sending
+    console.log('[send-welcome-message] Decrypting credentials...');
+    const [decryptedLogin, decryptedPassword] = await Promise.all([
+      decryptValue(client.login || ''),
+      decryptValue(client.password || '')
+    ]);
+    console.log('[send-welcome-message] Credentials decrypted successfully');
+
     // Get seller profile
     const { data: sellerProfile } = await supabase
       .from('profiles')
@@ -155,12 +221,14 @@ serve(async (req) => {
       );
     }
 
-    // Replace variables in message
+    // Replace variables in message - using DECRYPTED values
     const message = replaceVariables(template.message, {
       nome: client.name,
       empresa: sellerProfile?.company_name || sellerProfile?.full_name || '',
-      login: client.login || '',
-      senha: client.password || '',
+      login: decryptedLogin,         // Decrypted login
+      senha: decryptedPassword,       // Decrypted password
+      login_plain: decryptedLogin,    // Alias for backwards compatibility
+      senha_plain: decryptedPassword, // Alias for backwards compatibility
       vencimento: formatDate(client.expiration_date),
       valor: String(client.plan_price || 0),
       plano: client.plan_name || '',
