@@ -519,9 +519,11 @@ export default function Clients() {
     setIsDecryptingAll(false);
   }, [clients, decrypt, decryptedCredentials, allCredentialsDecrypted, isDecryptingAll]);
 
-  // Trigger decryption when user starts searching
+  // Trigger decryption when user starts searching (immediately for better search)
   useEffect(() => {
-    if (search.trim().length >= 2 && !allCredentialsDecrypted) {
+    // Decrypt credentials as soon as user starts typing (1+ characters)
+    // This ensures login search works immediately
+    if (search.trim().length >= 1 && !allCredentialsDecrypted) {
       decryptAllCredentials();
     }
   }, [search, allCredentialsDecrypted, decryptAllCredentials]);
@@ -1670,6 +1672,13 @@ export default function Clients() {
     return status === 'expired' && !isSent(c.id);
   }).length, [activeClients, isSent]);
 
+  // Normalize phone number for comparison - remove all non-numeric characters
+  const normalizePhoneForSearch = useCallback((phone: string | null | undefined): string => {
+    if (!phone) return '';
+    // Remove all non-numeric characters (spaces, dashes, parentheses, country code symbols)
+    return phone.replace(/\D/g, '');
+  }, []);
+
   // Heavily optimized filtering with useMemo - uses debounced search
   const filteredClients = useMemo(() => {
     const baseClients = filter === 'archived' ? archivedClients : activeClients;
@@ -1700,6 +1709,10 @@ export default function Clients() {
     const searchLower = rawSearch.toLowerCase();
     const normalizedSearch = normalizeText(rawSearch);
     const hasSearch = rawSearch.length > 0;
+    
+    // Normalize the search term for phone comparison
+    const normalizedSearchPhone = rawSearch.replace(/\D/g, '');
+    const hasPhoneDigits = normalizedSearchPhone.length >= 4; // Only search by phone if at least 4 digits
 
     return clientsToFilter.filter((client) => {
       // Search filter - only apply if there's a search term
@@ -1708,33 +1721,71 @@ export default function Clients() {
 
         // Check decrypted credentials if available (safe string fallbacks)
         const clientCredentials = decryptedCredentials[client.id];
-        const loginMatch = (clientCredentials?.login || '').toLowerCase().includes(searchLower);
-        const passwordMatch = (clientCredentials?.password || '').toLowerCase().includes(searchLower);
-        const login2Match = (clientCredentials?.login_2 || '').toLowerCase().includes(searchLower);
-        const password2Match = (clientCredentials?.password_2 || '').toLowerCase().includes(searchLower);
+        const decryptedLogin = clientCredentials?.login || '';
+        const decryptedLogin2 = clientCredentials?.login_2 || '';
+        
+        // Login matching - case insensitive, partial match
+        const loginMatch = decryptedLogin.toLowerCase().includes(searchLower);
+        const login2Match = decryptedLogin2.toLowerCase().includes(searchLower);
 
-        // Also check raw login/password for unencrypted data (safe string fallbacks)
-        const rawLoginMatch = (client.login || '').toLowerCase().includes(searchLower);
-        const rawPasswordMatch = (client.password || '').toLowerCase().includes(searchLower);
-        const rawLogin2Match = (client.login_2 || '').toLowerCase().includes(searchLower);
-        const rawPassword2Match = (client.password_2 || '').toLowerCase().includes(searchLower);
+        // Also check raw login for unencrypted/plain text data (legacy data)
+        const rawLogin = client.login || '';
+        const rawLogin2 = client.login_2 || '';
+        const rawLoginMatch = rawLogin.toLowerCase().includes(searchLower);
+        const rawLogin2Match = rawLogin2.toLowerCase().includes(searchLower);
+        
+        // Exact login match (when user pastes the full login)
+        const exactLoginMatch = decryptedLogin.toLowerCase() === searchLower ||
+                               decryptedLogin2.toLowerCase() === searchLower ||
+                               rawLogin.toLowerCase() === searchLower ||
+                               rawLogin2.toLowerCase() === searchLower;
 
         // DNS match
         const dnsMatch = (client.dns || '').toLowerCase().includes(searchLower);
+        
+        // Email match
+        const emailMatch = (client.email || '').toLowerCase().includes(searchLower);
+
+        // Name match with normalized text (handles accents)
+        const nameMatch = normalizedName.includes(normalizedSearch);
+        
+        // WhatsApp/Phone matching with normalization
+        // Remove all non-numeric characters from both search and client phone
+        const clientPhoneNormalized = normalizePhoneForSearch(client.phone);
+        let phoneMatch = false;
+        
+        if (hasPhoneDigits && clientPhoneNormalized) {
+          // Check if the normalized phone contains the search digits
+          // This handles: +55 11 99999-9999, (11) 99999-9999, 11999999999, etc.
+          phoneMatch = clientPhoneNormalized.includes(normalizedSearchPhone);
+          
+          // Also try matching without country code (remove first 2 digits if phone is long enough)
+          if (!phoneMatch && clientPhoneNormalized.length >= 12) {
+            const phoneWithoutCountry = clientPhoneNormalized.slice(2);
+            phoneMatch = phoneWithoutCountry.includes(normalizedSearchPhone);
+          }
+          
+          // Also check if search includes client's phone (for exact number match)
+          if (!phoneMatch) {
+            phoneMatch = normalizedSearchPhone.includes(clientPhoneNormalized);
+          }
+        }
+        
+        // Also try plain text phone match for partial searches
+        if (!phoneMatch && client.phone) {
+          phoneMatch = client.phone.includes(rawSearch);
+        }
 
         const matchesSearch =
-          normalizedName.includes(normalizedSearch) ||
-          client.phone?.includes(rawSearch) ||
-          (client.email || '').toLowerCase().includes(searchLower) ||
+          nameMatch ||
+          phoneMatch ||
+          emailMatch ||
           dnsMatch ||
           loginMatch ||
-          passwordMatch ||
           login2Match ||
-          password2Match ||
           rawLoginMatch ||
-          rawPasswordMatch ||
           rawLogin2Match ||
-          rawPassword2Match;
+          exactLoginMatch;
 
         if (!matchesSearch) return false;
       }
@@ -1775,7 +1826,7 @@ export default function Clients() {
           return true;
       }
     });
-  }, [activeClients, archivedClients, filter, debouncedSearch, categoryFilter, serverFilter, dnsFilter, dateFilter, decryptedCredentials, isSent, clientsWithPaidAppsSet]);
+  }, [activeClients, archivedClients, filter, debouncedSearch, categoryFilter, serverFilter, dnsFilter, dateFilter, decryptedCredentials, isSent, clientsWithPaidAppsSet, normalizePhoneForSearch]);
 
   // Sort clients: recently added (last 2 hours) appear at top, then by expiration
   const sortedClients = useMemo(() => {
