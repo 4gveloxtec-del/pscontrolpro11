@@ -234,22 +234,64 @@ serve(async (req) => {
       }
     }
 
+    // Get device apps for client
+    const { data: deviceApps } = await supabase
+      .from('reseller_device_apps')
+      .select('*')
+      .eq('seller_id', sellerId)
+      .eq('is_active', true);
+
+    // Format apps for message
+    let appsText = '';
+    let linksText = '';
+    if (deviceApps && deviceApps.length > 0 && client.device) {
+      const clientDevices = (client.device || '').split(',').map((d: string) => d.trim());
+      const deviceMapping: Record<string, string[]> = {
+        'Smart TV': ['smart_tv'],
+        'TV Android': ['android_tv', 'smart_tv'],
+        'Celular': ['celular_android', 'iphone'],
+        'TV Box': ['android_tv'],
+        'Fire Stick': ['fire_stick', 'android_tv'],
+      };
+      
+      const targetTypes = new Set<string>();
+      clientDevices.forEach((d: string) => {
+        (deviceMapping[d] || []).forEach((t: string) => targetTypes.add(t));
+      });
+
+      const compatibleApps = deviceApps.filter((app: any) => 
+        (app.device_types || []).some((t: string) => targetTypes.has(t))
+      );
+
+      if (compatibleApps.length > 0) {
+        appsText = compatibleApps.map((a: any) => `${a.icon || '📱'} ${a.name}`).join('\n');
+        linksText = compatibleApps
+          .filter((a: any) => a.download_url)
+          .map((a: any) => `${a.icon || '📱'} ${a.name}: ${a.download_url}`)
+          .join('\n');
+      }
+    }
+
     // Replace variables in message - using DECRYPTED values
     const message = replaceVariables(template.message, {
       nome: client.name,
       empresa: sellerProfile?.company_name || sellerProfile?.full_name || '',
-      login: decryptedLogin,         // Decrypted login
-      senha: decryptedPassword,       // Decrypted password
-      login_plain: decryptedLogin,    // Alias for backwards compatibility
-      senha_plain: decryptedPassword, // Alias for backwards compatibility
+      login: decryptedLogin,
+      senha: decryptedPassword,
+      login_plain: decryptedLogin,
+      senha_plain: decryptedPassword,
       vencimento: formatDate(client.expiration_date),
       valor: String(client.plan_price || 0),
       plano: client.plan_name || '',
       servidor: client.server_name || '',
       pix: sellerProfile?.pix_key || '',
       servico: client.category || 'IPTV',
-      dns: '',  // Remove DNS from message - always empty
-      mac: macAddress,  // Add MAC address
+      dns: '',
+      mac: macAddress,
+      // New dynamic filters
+      dispositivo: client.device || '',
+      apps: appsText,
+      links: linksText,
     });
 
     // Send welcome message
