@@ -360,6 +360,17 @@ serve(async (req) => {
       }
 
       case 'send_bulk': {
+        // Check if instance is blocked for bulk messages too
+        if (userId) {
+          const blockCheck = await checkBlockedInstance(userId);
+          if (blockCheck.blocked) {
+            return new Response(
+              JSON.stringify({ success: false, blocked: true, error: blockCheck.reason }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+
         if (!config?.api_url || !config?.api_token || !config?.instance_name) {
           return new Response(
             JSON.stringify({ success: false, error: 'Missing configuration' }),
@@ -367,7 +378,8 @@ serve(async (req) => {
           );
         }
 
-        const body = await req.json();
+        // Get messages from the already-parsed body
+        const body = await req.json().catch(() => ({}));
         const messages = body.messages;
         if (!messages || !Array.isArray(messages)) {
           return new Response(

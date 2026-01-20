@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// Crypto edge function - handles encryption/decryption with AES-256-GCM
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -91,12 +91,21 @@ async function decrypt(ciphertext: string): Promise<string> {
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // Validate authorization header for security
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ error: 'Authorization required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const { action, data } = await req.json();
     
     console.log(`Crypto action: ${action}`);
