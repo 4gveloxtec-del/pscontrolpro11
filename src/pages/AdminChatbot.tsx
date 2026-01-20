@@ -31,7 +31,9 @@ import {
   Settings,
   Copy,
   CheckCircle2,
-  Loader2
+  Loader2,
+  Clock,
+  Repeat
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
 
@@ -80,6 +82,7 @@ export default function AdminChatbot() {
     typing_enabled: true,
     typing_duration_min: 2,
     typing_duration_max: 5,
+    response_mode: 'always' as 'always' | '6h' | '24h',
   });
 
   // Fetch admin chatbot settings from app_settings
@@ -89,7 +92,7 @@ export default function AdminChatbot() {
       const { data, error } = await supabase
         .from('app_settings')
         .select('key, value')
-        .in('key', ['admin_chatbot_enabled', 'admin_chatbot_delay_min', 'admin_chatbot_delay_max', 'admin_chatbot_typing_enabled', 'admin_chatbot_typing_min', 'admin_chatbot_typing_max']);
+        .in('key', ['admin_chatbot_enabled', 'admin_chatbot_delay_min', 'admin_chatbot_delay_max', 'admin_chatbot_typing_enabled', 'admin_chatbot_typing_min', 'admin_chatbot_typing_max', 'admin_chatbot_response_mode']);
       if (error) throw error;
       return data || [];
     },
@@ -108,6 +111,7 @@ export default function AdminChatbot() {
         typing_enabled: settings.admin_chatbot_typing_enabled !== 'false',
         typing_duration_min: parseInt(settings.admin_chatbot_typing_min || '2'),
         typing_duration_max: parseInt(settings.admin_chatbot_typing_max || '5'),
+        response_mode: (settings.admin_chatbot_response_mode as 'always' | '6h' | '24h') || 'always',
       });
     }
   }, [adminSettings]);
@@ -878,6 +882,133 @@ export default function AdminChatbot() {
                     </div>
                   )}
                   <p className="text-xs text-slate-500">Mostra "digitando..." no WhatsApp antes de enviar a mensagem</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Response Frequency */}
+            <Card className="bg-slate-800 border-slate-700">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Repeat className="h-5 w-5" />
+                  Frequência de Resposta
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  Controle quantas vezes o bot responde ao mesmo contato
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-3">
+                  <div 
+                    onClick={() => {
+                      setSettingsForm(prev => ({ ...prev, response_mode: 'always' }));
+                      saveAdminSetting('admin_chatbot_response_mode', 'always');
+                    }}
+                    className={`p-4 rounded-lg border cursor-pointer transition-all ${
+                      settingsForm.response_mode === 'always' 
+                        ? 'bg-green-600/20 border-green-500/50' 
+                        : 'bg-slate-700/50 border-slate-600 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        settingsForm.response_mode === 'always' ? 'border-green-500' : 'border-slate-500'
+                      }`}>
+                        {settingsForm.response_mode === 'always' && (
+                          <div className="w-2 h-2 rounded-full bg-green-500" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium text-white flex items-center gap-2">
+                          <Repeat className="h-4 w-4 text-green-400" />
+                          Responder Sempre
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Responde a todas as mensagens recebidas (ideal para testes)
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => {
+                      setSettingsForm(prev => ({ ...prev, response_mode: '6h' }));
+                      saveAdminSetting('admin_chatbot_response_mode', '6h');
+                    }}
+                    className={`p-4 rounded-lg border cursor-pointer transition-all ${
+                      settingsForm.response_mode === '6h' 
+                        ? 'bg-blue-600/20 border-blue-500/50' 
+                        : 'bg-slate-700/50 border-slate-600 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        settingsForm.response_mode === '6h' ? 'border-blue-500' : 'border-slate-500'
+                      }`}>
+                        {settingsForm.response_mode === '6h' && (
+                          <div className="w-2 h-2 rounded-full bg-blue-500" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium text-white flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-blue-400" />
+                          A cada 6 horas
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Responde no máximo 1x a cada 6 horas por contato
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={() => {
+                      setSettingsForm(prev => ({ ...prev, response_mode: '24h' }));
+                      saveAdminSetting('admin_chatbot_response_mode', '24h');
+                    }}
+                    className={`p-4 rounded-lg border cursor-pointer transition-all ${
+                      settingsForm.response_mode === '24h' 
+                        ? 'bg-purple-600/20 border-purple-500/50' 
+                        : 'bg-slate-700/50 border-slate-600 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        settingsForm.response_mode === '24h' ? 'border-purple-500' : 'border-slate-500'
+                      }`}>
+                        {settingsForm.response_mode === '24h' && (
+                          <div className="w-2 h-2 rounded-full bg-purple-500" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium text-white flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-purple-400" />
+                          A cada 24 horas
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Responde no máximo 1x por dia por contato (produção)
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${
+                  settingsForm.response_mode === 'always' 
+                    ? 'bg-yellow-600/20 border border-yellow-500/30 text-yellow-400' 
+                    : 'bg-slate-700/50 border border-slate-600 text-slate-400'
+                }`}>
+                  {settingsForm.response_mode === 'always' ? (
+                    <>
+                      <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                      <span>Modo de testes ativo - o bot responde a todas as mensagens</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                      <span>Modo produção - responde 1x a cada {settingsForm.response_mode === '6h' ? '6 horas' : '24 horas'}</span>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>
