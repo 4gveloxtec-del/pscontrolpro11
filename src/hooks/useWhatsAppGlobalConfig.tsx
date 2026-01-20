@@ -14,7 +14,7 @@ interface WhatsAppGlobalConfig {
 }
 
 export function useWhatsAppGlobalConfig() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [config, setConfig] = useState<WhatsAppGlobalConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,48 +62,66 @@ export function useWhatsAppGlobalConfig() {
       setError(null);
       
       // Get current user ID for admin_user_id
-      const { data: { user } } = await supabase.auth.getUser();
+      const currentUserId = user?.id;
+      
+      if (!currentUserId) {
+        return { error: 'Usuário não autenticado' };
+      }
+      
+      // Normalize the instance_name - trim whitespace and lowercase for consistency
+      const normalizedInstanceName = newConfig.instance_name?.trim() || null;
       
       if (config?.id) {
         // Update existing
         const { error: updateError } = await supabase
           .from('whatsapp_global_config')
           .update({
-            api_url: newConfig.api_url,
-            api_token: newConfig.api_token,
+            api_url: newConfig.api_url.trim(),
+            api_token: newConfig.api_token.trim(),
             is_active: newConfig.is_active,
-            instance_name: newConfig.instance_name || null,
-            admin_user_id: user?.id || config.admin_user_id,
+            instance_name: normalizedInstanceName,
+            admin_user_id: currentUserId,
             updated_at: new Date().toISOString(),
           })
           .eq('id', config.id);
 
         if (updateError) {
+          console.error('Error updating global config:', updateError);
           setError(updateError.message);
           return { error: updateError.message };
         }
 
-        setConfig(prev => prev ? { ...prev, ...newConfig } : null);
+        // Update local state
+        setConfig(prev => prev ? { 
+          ...prev, 
+          ...newConfig, 
+          instance_name: normalizedInstanceName,
+          admin_user_id: currentUserId 
+        } : null);
+        
+        console.log('[GlobalConfig] Updated successfully with instance_name:', normalizedInstanceName);
       } else {
         // Insert new
         const { data, error: insertError } = await supabase
           .from('whatsapp_global_config')
           .insert({
-            api_url: newConfig.api_url,
-            api_token: newConfig.api_token,
+            api_url: newConfig.api_url.trim(),
+            api_token: newConfig.api_token.trim(),
             is_active: newConfig.is_active,
-            instance_name: newConfig.instance_name || null,
-            admin_user_id: user?.id,
+            instance_name: normalizedInstanceName,
+            admin_user_id: currentUserId,
           })
           .select()
           .single();
 
         if (insertError) {
+          console.error('Error inserting global config:', insertError);
           setError(insertError.message);
           return { error: insertError.message };
         }
 
         setConfig(data as WhatsAppGlobalConfig);
+        console.log('[GlobalConfig] Created successfully with instance_name:', normalizedInstanceName);
       }
 
       return { error: null };
@@ -112,7 +130,7 @@ export function useWhatsAppGlobalConfig() {
       setError(err.message);
       return { error: err.message };
     }
-  }, [isAdmin, config?.id, config?.admin_user_id]);
+  }, [isAdmin, user?.id, config?.id]);
 
   return {
     config,
@@ -121,5 +139,6 @@ export function useWhatsAppGlobalConfig() {
     saveConfig,
     refetch: fetchConfig,
     isApiActive: config?.is_active ?? false,
+    adminInstanceName: config?.instance_name || null,
   };
 }
