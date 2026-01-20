@@ -59,10 +59,20 @@ export default function Sellers() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [tempPasswordDialog, setTempPasswordDialog] = useState<{ open: boolean; password: string; email: string }>({ 
+  const [tempPasswordDialog, setTempPasswordDialog] = useState<{ 
+    open: boolean; 
+    password: string; 
+    email: string;
+    whatsapp: string;
+    name: string;
+    sendingWhatsApp: boolean;
+  }>({ 
     open: false, 
     password: '', 
-    email: '' 
+    email: '',
+    whatsapp: '',
+    name: '',
+    sendingWhatsApp: false
   });
   const [copiedPassword, setCopiedPassword] = useState(false);
   
@@ -273,7 +283,10 @@ export default function Sellers() {
       setTempPasswordDialog({
         open: true,
         password: data.tempPassword,
-        email: data.email
+        email: data.email,
+        whatsapp: newSellerWhatsapp,
+        name: newSellerName || data.email.split('@')[0],
+        sendingWhatsApp: false
       });
     },
     onError: (error: Error) => {
@@ -298,7 +311,10 @@ export default function Sellers() {
       setTempPasswordDialog({
         open: true,
         password: data.tempPassword,
-        email: seller?.email || ''
+        email: seller?.email || '',
+        whatsapp: seller?.whatsapp || '',
+        name: seller?.full_name || seller?.email.split('@')[0] || '',
+        sendingWhatsApp: false
       });
     },
     onError: (error: Error) => {
@@ -853,18 +869,19 @@ export default function Sellers() {
       )}
 
       {/* Temp Password Dialog */}
-      <Dialog open={tempPasswordDialog.open} onOpenChange={(open) => !open && setTempPasswordDialog({ open: false, password: '', email: '' })}>
-        <DialogContent>
+      <Dialog open={tempPasswordDialog.open} onOpenChange={(open) => !open && setTempPasswordDialog({ open: false, password: '', email: '', whatsapp: '', name: '', sendingWhatsApp: false })}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Senha Temporária Gerada</DialogTitle>
             <DialogDescription>
-              Envie esta senha para o vendedor. Ele precisará alterá-la no primeiro login.
+              Envie esta senha para o revendedor via WhatsApp junto com o link do aplicativo atualizado.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="p-3 bg-muted rounded-lg">
-              <p className="text-sm text-muted-foreground mb-1">Email:</p>
-              <p className="font-medium">{tempPasswordDialog.email}</p>
+              <p className="text-sm text-muted-foreground mb-1">Revendedor:</p>
+              <p className="font-medium">{tempPasswordDialog.name}</p>
+              <p className="text-sm text-muted-foreground">{tempPasswordDialog.email}</p>
             </div>
             <div className="p-3 bg-primary/10 rounded-lg">
               <p className="text-sm text-muted-foreground mb-1">Senha Temporária:</p>
@@ -878,11 +895,51 @@ export default function Sellers() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              O vendedor será obrigado a alterar esta senha no primeiro acesso.
+              O revendedor será obrigado a alterar esta senha no primeiro acesso.
             </p>
           </div>
-          <DialogFooter>
-            <Button onClick={() => setTempPasswordDialog({ open: false, password: '', email: '' })}>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {tempPasswordDialog.whatsapp && (
+              <Button 
+                variant="default" 
+                className="w-full sm:w-auto gap-2"
+                onClick={() => {
+                  const appLink = 'https://stream-manager-hub.lovable.app';
+                  const message = `🚀 *Atualização do Aplicativo de Gerenciamento*
+
+Olá, ${tempPasswordDialog.name}! 
+
+Temos ótimas novidades! Lançamos uma *versão atualizada* do aplicativo com melhorias incríveis:
+
+✅ *Envio Automático de Mensagens via WhatsApp* - Agora o sistema envia mensagens automaticamente para seus clientes (avisos de vencimento, cobrança, etc.)
+✅ Interface mais rápida e moderna
+✅ Novos recursos de gerenciamento
+
+📱 *Link do Aplicativo Atualizado:*
+${appLink}
+
+🔐 *Suas Credenciais de Acesso:*
+• Email: ${tempPasswordDialog.email}
+• Senha temporária: ${tempPasswordDialog.password}
+
+⚠️ *Importante:* Como fizemos o backup dos dados, sua senha anterior não funciona mais. Use a senha temporária acima para acessar. No primeiro login, você será solicitado a criar uma nova senha.
+
+Qualquer dúvida, estou à disposição!`;
+                  
+                  const phone = tempPasswordDialog.whatsapp.replace(/\D/g, '');
+                  const encodedMessage = encodeURIComponent(message);
+                  window.open(`https://wa.me/${phone}?text=${encodedMessage}`, '_blank');
+                  toast.success('WhatsApp aberto com a mensagem!');
+                }}
+              >
+                <MessageCircle className="h-4 w-4" />
+                Enviar via WhatsApp
+              </Button>
+            )}
+            <Button 
+              variant="outline" 
+              onClick={() => setTempPasswordDialog({ open: false, password: '', email: '', whatsapp: '', name: '', sendingWhatsApp: false })}
+            >
               Fechar
             </Button>
           </DialogFooter>
