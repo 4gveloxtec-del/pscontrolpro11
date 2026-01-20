@@ -136,6 +136,69 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_chatbot_contacts: {
+        Row: {
+          created_at: string | null
+          current_node_key: string | null
+          id: string
+          interaction_count: number | null
+          last_interaction_at: string | null
+          last_response_at: string | null
+          name: string | null
+          phone: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          current_node_key?: string | null
+          id?: string
+          interaction_count?: number | null
+          last_interaction_at?: string | null
+          last_response_at?: string | null
+          name?: string | null
+          phone: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          current_node_key?: string | null
+          id?: string
+          interaction_count?: number | null
+          last_interaction_at?: string | null
+          last_response_at?: string | null
+          name?: string | null
+          phone?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      admin_chatbot_interactions: {
+        Row: {
+          created_at: string | null
+          id: string
+          incoming_message: string | null
+          node_key: string | null
+          phone: string
+          response_sent: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          incoming_message?: string | null
+          node_key?: string | null
+          phone: string
+          response_sent?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          incoming_message?: string | null
+          node_key?: string | null
+          phone?: string
+          response_sent?: string | null
+        }
+        Relationships: []
+      }
       admin_reseller_message_logs: {
         Row: {
           admin_id: string

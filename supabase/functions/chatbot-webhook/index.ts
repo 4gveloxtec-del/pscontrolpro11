@@ -185,6 +185,280 @@ interface GlobalConfig {
   is_active: boolean;
 }
 
+// Admin chatbot node structure
+interface AdminChatbotNode {
+  id: string;
+  node_key: string;
+  title: string;
+  content: string;
+  parent_key: string | null;
+  options: Array<{ key: string; label: string; target: string }>;
+  response_type: string;
+  icon: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+// Admin chatbot contact tracking
+interface AdminChatbotContact {
+  id: string;
+  phone: string;
+  name: string | null;
+  current_node_key: string;
+  last_response_at: string | null;
+  last_interaction_at: string | null;
+  interaction_count: number;
+}
+
+// Helper: Get or create admin chatbot contact
+async function getOrCreateAdminContact(
+  supabase: any,
+  phone: string,
+  pushName: string
+): Promise<AdminChatbotContact | null> {
+  let { data: contact } = await supabase
+    .from("admin_chatbot_contacts")
+    .select("*")
+    .eq("phone", phone)
+    .maybeSingle();
+
+  if (!contact) {
+    const { data: newContact, error } = await supabase
+      .from("admin_chatbot_contacts")
+      .insert({
+        phone,
+        name: pushName,
+        current_node_key: "inicial",
+        interaction_count: 0,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error creating admin contact:", error);
+      return null;
+    }
+    contact = newContact;
+  }
+
+  return contact;
+}
+
+// Helper: Check admin chatbot cooldown
+function canRespondAdmin(
+  contact: AdminChatbotContact | null,
+  responseMode: string,
+  now: Date
+): { canSend: boolean; reason?: string } {
+  // "always" mode - always respond (for testing)
+  if (responseMode === "always") {
+    return { canSend: true };
+  }
+
+  if (!contact?.last_response_at) {
+    return { canSend: true };
+  }
+
+  const lastResponse = new Date(contact.last_response_at);
+  const hoursSinceLastResponse = (now.getTime() - lastResponse.getTime()) / (1000 * 60 * 60);
+
+  // "6h" mode
+  if (responseMode === "6h" && hoursSinceLastResponse < 6) {
+    return { canSend: false, reason: "Cooldown 6h ainda ativo" };
+  }
+
+  // "24h" mode (default)
+  if (responseMode === "24h" && hoursSinceLastResponse < 24) {
+    return { canSend: false, reason: "Cooldown 24h ainda ativo" };
+  }
+
+  return { canSend: true };
+}
+
+// Helper: Process admin chatbot input and find next node
+function processAdminInput(
+  currentNodeKey: string,
+  input: string,
+  nodes: AdminChatbotNode[]
+): { nextNode: AdminChatbotNode | null; message: string } {
+  const normalizedInput = input.toLowerCase().trim();
+
+  // Check for return to main menu
+  if (normalizedInput === "*" || normalizedInput === "voltar" || normalizedInput === "menu" || normalizedInput === "0") {
+    const inicial = nodes.find(n => n.node_key === "inicial");
+    return { nextNode: inicial || null, message: inicial?.content || "" };
+  }
+
+  const currentNode = nodes.find(n => n.node_key === currentNodeKey);
+  if (!currentNode) {
+    const inicial = nodes.find(n => n.node_key === "inicial");
+    return { nextNode: inicial || null, message: inicial?.content || "" };
+  }
+
+  // Input mappings for emoji numbers and text
+  const inputMappings: Record<string, string> = {
+    "1️⃣": "1", "um": "1", "one": "1",
+    "2️⃣": "2", "dois": "2", "two": "2",
+    "3️⃣": "3", "tres": "3", "três": "3", "three": "3",
+    "4️⃣": "4", "quatro": "4", "four": "4",
+    "5️⃣": "5", "cinco": "5", "five": "5",
+    "6️⃣": "6", "seis": "6", "six": "6",
+    "7️⃣": "7", "sete": "7", "seven": "7",
+    "8️⃣": "8", "oito": "8", "eight": "8",
+    "9️⃣": "9", "nove": "9", "nine": "9",
+  };
+
+  let normalizedKey = normalizedInput;
+  for (const [key, value] of Object.entries(inputMappings)) {
+    if (normalizedInput === key || normalizedInput.includes(key)) {
+      normalizedKey = value;
+      break;
+    }
+  }
+
+  // Find matching option in current node
+  const matchedOption = currentNode.options.find(opt => opt.key === normalizedKey);
+  if (matchedOption) {
+    const targetNode = nodes.find(n => n.node_key === matchedOption.target);
+    if (targetNode) {
+      return { nextNode: targetNode, message: targetNode.content };
+    }
+  }
+
+  // No valid option found
+  return {
+    nextNode: null,
+    message: "❌ Opção inválida. Por favor, escolha uma opção válida ou digite * para voltar ao menu."
+  };
+}
+
+// Process admin chatbot message
+async function processAdminChatbotMessage(
+  supabase: any,
+  globalConfig: GlobalConfig,
+  instanceName: string,
+  phone: string,
+  messageText: string,
+  pushName: string
+): Promise<{ status: string; reason?: string; sent?: boolean }> {
+  // Get admin chatbot settings
+  const { data: enabledSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "admin_chatbot_enabled")
+    .maybeSingle();
+
+  const isEnabled = enabledSetting?.value === "true";
+  if (!isEnabled) {
+    return { status: "ignored", reason: "Admin chatbot disabled" };
+  }
+
+  // Get response mode
+  const { data: modeSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "admin_chatbot_response_mode")
+    .maybeSingle();
+
+  const responseMode = modeSetting?.value || "24h";
+
+  // Get chatbot delay settings
+  const { data: delayMinSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "admin_chatbot_delay_min")
+    .maybeSingle();
+
+  const { data: delayMaxSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "admin_chatbot_delay_max")
+    .maybeSingle();
+
+  const { data: typingSetting } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "admin_chatbot_typing_enabled")
+    .maybeSingle();
+
+  const delayMin = parseInt(delayMinSetting?.value || "2");
+  const delayMax = parseInt(delayMaxSetting?.value || "5");
+  const typingEnabled = typingSetting?.value !== "false";
+
+  // Get or create contact
+  const contact = await getOrCreateAdminContact(supabase, phone, pushName);
+  if (!contact) {
+    return { status: "error", reason: "Failed to get/create contact" };
+  }
+
+  // Check cooldown
+  const now = new Date();
+  const cooldownCheck = canRespondAdmin(contact, responseMode, now);
+  if (!cooldownCheck.canSend) {
+    console.log("[AdminChatbot] Cooldown active:", cooldownCheck.reason);
+    return { status: "blocked", reason: cooldownCheck.reason };
+  }
+
+  // Get all chatbot nodes
+  const { data: nodes } = await supabase
+    .from("admin_chatbot_config")
+    .select("*")
+    .eq("is_active", true)
+    .order("sort_order");
+
+  if (!nodes || nodes.length === 0) {
+    return { status: "ignored", reason: "No chatbot nodes configured" };
+  }
+
+  // Process input
+  const currentNodeKey = contact.current_node_key || "inicial";
+  const result = processAdminInput(currentNodeKey, messageText, nodes as AdminChatbotNode[]);
+
+  // Prepare response message
+  let responseMessage = result.message;
+  let newNodeKey = currentNodeKey;
+
+  if (result.nextNode) {
+    newNodeKey = result.nextNode.node_key;
+  }
+
+  // Send typing status if enabled
+  if (typingEnabled) {
+    const typingDuration = getRandomDelay(delayMin, delayMax);
+    await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
+  } else {
+    const delay = getRandomDelay(delayMin, delayMax);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  // Send response
+  const sent = await sendTextMessage(globalConfig, instanceName, phone, responseMessage, supabase, undefined);
+
+  if (sent) {
+    // Update contact
+    await supabase
+      .from("admin_chatbot_contacts")
+      .update({
+        current_node_key: newNodeKey,
+        last_response_at: now.toISOString(),
+        last_interaction_at: now.toISOString(),
+        interaction_count: (contact.interaction_count || 0) + 1,
+        name: pushName || contact.name,
+      })
+      .eq("id", contact.id);
+
+    // Log interaction
+    await supabase.from("admin_chatbot_interactions").insert({
+      phone,
+      incoming_message: messageText,
+      response_sent: responseMessage,
+      node_key: newNodeKey,
+    });
+  }
+
+  return { status: sent ? "sent" : "failed", sent };
+}
+
 // Helper: Extract phone number from remoteJid
 function extractPhone(remoteJid: string): string {
   return remoteJid.split("@")[0].replace(/\D/g, "");
@@ -1417,6 +1691,66 @@ serve(async (req) => {
     const remoteJid = message.key.remoteJid;
     const fromMe = message.key.fromMe;
     const pushName = message.pushName || "";
+
+    // Check for admin mode
+    let rawUrl = req.url;
+    if (rawUrl.includes("%3F")) {
+      rawUrl = rawUrl.replace(/%3F/g, "?").replace(/%26/g, "&").replace(/%3D/g, "=");
+    }
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(rawUrl);
+    } catch {
+      parsedUrl = new URL(rawUrl, "https://placeholder.co");
+    }
+    const isAdminMode = parsedUrl.searchParams.get("admin") === "true";
+
+    // If admin mode, process with admin chatbot logic
+    if (isAdminMode) {
+      console.log("[AdminChatbot] Processing admin chatbot message");
+      
+      // Ignore own messages and groups
+      if (fromMe || isGroupMessage(remoteJid)) {
+        return new Response(JSON.stringify({ status: "ignored", reason: "Own message or group" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const messageText = extractMessageText(message.message);
+      if (!messageText) {
+        return new Response(JSON.stringify({ status: "ignored", reason: "No text content" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const phone = extractPhone(remoteJid);
+
+      // Get global config for sending
+      const { data: globalConfigData } = await supabase
+        .from("whatsapp_global_config")
+        .select("*")
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (!globalConfigData) {
+        return new Response(JSON.stringify({ status: "ignored", reason: "API not active" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const result = await processAdminChatbotMessage(
+        supabase,
+        globalConfigData as GlobalConfig,
+        instanceName,
+        phone,
+        messageText,
+        pushName
+      );
+
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     
     // Get global config
     const { data: globalConfigData } = await supabase
