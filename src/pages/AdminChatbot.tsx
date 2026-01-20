@@ -27,7 +27,11 @@ import {
   Settings2,
   Eye,
   FileText,
-  Import
+  Import,
+  Settings,
+  Copy,
+  CheckCircle2,
+  Loader2
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
 
@@ -66,6 +70,66 @@ export default function AdminChatbot() {
   const [editingNode, setEditingNode] = useState<ChatbotNode | null>(null);
   const [deletingNodeId, setDeletingNodeId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+  
+  // Settings state
+  const [settingsForm, setSettingsForm] = useState({
+    is_enabled: false,
+    response_delay_min: 2,
+    response_delay_max: 5,
+    typing_enabled: true,
+    typing_duration_min: 2,
+    typing_duration_max: 5,
+  });
+
+  // Fetch admin chatbot settings from app_settings
+  const { data: adminSettings, refetch: refetchSettings } = useQuery({
+    queryKey: ['admin-chatbot-settings'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('key, value')
+        .in('key', ['admin_chatbot_enabled', 'admin_chatbot_delay_min', 'admin_chatbot_delay_max', 'admin_chatbot_typing_enabled', 'admin_chatbot_typing_min', 'admin_chatbot_typing_max']);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  // Parse settings from app_settings
+  useEffect(() => {
+    if (adminSettings) {
+      const settings: Record<string, string> = {};
+      adminSettings.forEach(s => { settings[s.key] = s.value; });
+      
+      setSettingsForm({
+        is_enabled: settings.admin_chatbot_enabled === 'true',
+        response_delay_min: parseInt(settings.admin_chatbot_delay_min || '2'),
+        response_delay_max: parseInt(settings.admin_chatbot_delay_max || '5'),
+        typing_enabled: settings.admin_chatbot_typing_enabled !== 'false',
+        typing_duration_min: parseInt(settings.admin_chatbot_typing_min || '2'),
+        typing_duration_max: parseInt(settings.admin_chatbot_typing_max || '5'),
+      });
+    }
+  }, [adminSettings]);
+
+  const saveAdminSetting = async (key: string, value: string) => {
+    const { error } = await supabase
+      .from('app_settings')
+      .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if (error) console.error('Error saving setting:', error);
+    refetchSettings();
+  };
+
+  const getWebhookUrl = () => {
+    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID || 'kgtqnjhmwsvswhrczqaf';
+    return `https://${projectId}.supabase.co/functions/v1/chatbot-webhook?admin=true`;
+  };
+
+  const copyWebhookUrl = async () => {
+    await navigator.clipboard.writeText(getWebhookUrl());
+    setCopiedWebhook(true);
+    setTimeout(() => setCopiedWebhook(false), 2000);
+  };
   
   const [nodeForm, setNodeForm] = useState({
     node_key: '',
@@ -393,6 +457,20 @@ export default function AdminChatbot() {
             Configure e teste o atendimento automatizado
           </p>
         </div>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${settingsForm.is_enabled ? 'bg-green-600/20 border border-green-500/30' : 'bg-slate-700 border border-slate-600'}`}>
+            <Switch
+              checked={settingsForm.is_enabled}
+              onCheckedChange={(checked) => {
+                setSettingsForm(prev => ({ ...prev, is_enabled: checked }));
+                saveAdminSetting('admin_chatbot_enabled', String(checked));
+              }}
+            />
+            <Label className={settingsForm.is_enabled ? 'text-green-400' : 'text-slate-400'}>
+              {settingsForm.is_enabled ? 'Ativo' : 'Inativo'}
+            </Label>
+          </div>
+        </div>
       </div>
 
       <Tabs defaultValue="simulator" className="space-y-4">
@@ -404,6 +482,10 @@ export default function AdminChatbot() {
           <TabsTrigger value="editor" className="data-[state=active]:bg-blue-600">
             <Settings2 className="h-4 w-4 mr-2" />
             Editor
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="data-[state=active]:bg-blue-600">
+            <Settings className="h-4 w-4 mr-2" />
+            Configurações
           </TabsTrigger>
         </TabsList>
 
@@ -630,6 +712,175 @@ export default function AdminChatbot() {
                 </Card>
               ))}
             </div>
+          </div>
+        </TabsContent>
+
+        {/* SETTINGS TAB */}
+        <TabsContent value="settings">
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Webhook Configuration */}
+            <Card className="bg-slate-800 border-slate-700">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Bot className="h-5 w-5" />
+                  Webhook do Chatbot
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  Configure na Evolution API para receber mensagens
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-slate-300">URL do Webhook</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={getWebhookUrl()}
+                      readOnly
+                      className="bg-slate-700 border-slate-600 text-slate-300 text-xs font-mono"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={copyWebhookUrl}
+                      className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                    >
+                      {copiedWebhook ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-400" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 rounded-lg p-4 border border-slate-700">
+                  <h4 className="font-medium text-white mb-2">Como configurar:</h4>
+                  <ol className="list-decimal list-inside space-y-1 text-sm text-slate-400">
+                    <li>Acesse o painel da Evolution API</li>
+                    <li>Vá em Configurações da Instância → Webhook</li>
+                    <li>Cole a URL acima no campo de Webhook</li>
+                    <li>Habilite o evento <code className="bg-slate-800 px-1 rounded">messages.upsert</code></li>
+                    <li>Salve as configurações</li>
+                  </ol>
+                </div>
+
+                <div className={`flex items-center gap-2 p-3 rounded-lg ${settingsForm.is_enabled ? 'bg-green-600/20 border border-green-500/30' : 'bg-yellow-600/20 border border-yellow-500/30'}`}>
+                  {settingsForm.is_enabled ? (
+                    <>
+                      <CheckCircle2 className="h-5 w-5 text-green-400" />
+                      <span className="text-green-400">Chatbot ativo e pronto para receber mensagens</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="h-5 w-5 text-yellow-400" />
+                      <span className="text-yellow-400">Chatbot desativado. Ative no topo da página.</span>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Delay Settings */}
+            <Card className="bg-slate-800 border-slate-700">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  Comportamento
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  Ajuste os delays para parecer mais humano
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Response Delay */}
+                <div className="space-y-3">
+                  <Label className="text-slate-300">Delay de Resposta (segundos)</Label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs text-slate-500">Mínimo</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={30}
+                        value={settingsForm.response_delay_min}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 0;
+                          setSettingsForm(prev => ({ ...prev, response_delay_min: val }));
+                          saveAdminSetting('admin_chatbot_delay_min', String(val));
+                        }}
+                        className="bg-slate-700 border-slate-600"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs text-slate-500">Máximo</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={30}
+                        value={settingsForm.response_delay_max}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 0;
+                          setSettingsForm(prev => ({ ...prev, response_delay_max: val }));
+                          saveAdminSetting('admin_chatbot_delay_max', String(val));
+                        }}
+                        className="bg-slate-700 border-slate-600"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500">Tempo aleatório entre {settingsForm.response_delay_min}s e {settingsForm.response_delay_max}s antes de responder</p>
+                </div>
+
+                {/* Typing Simulation */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-slate-300">Simular "Digitando..."</Label>
+                    <Switch
+                      checked={settingsForm.typing_enabled}
+                      onCheckedChange={(checked) => {
+                        setSettingsForm(prev => ({ ...prev, typing_enabled: checked }));
+                        saveAdminSetting('admin_chatbot_typing_enabled', String(checked));
+                      }}
+                    />
+                  </div>
+                  
+                  {settingsForm.typing_enabled && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs text-slate-500">Mínimo (seg)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={settingsForm.typing_duration_min}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            setSettingsForm(prev => ({ ...prev, typing_duration_min: val }));
+                            saveAdminSetting('admin_chatbot_typing_min', String(val));
+                          }}
+                          className="bg-slate-700 border-slate-600"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-slate-500">Máximo (seg)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={settingsForm.typing_duration_max}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            setSettingsForm(prev => ({ ...prev, typing_duration_max: val }));
+                            saveAdminSetting('admin_chatbot_typing_max', String(val));
+                          }}
+                          className="bg-slate-700 border-slate-600"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-500">Mostra "digitando..." no WhatsApp antes de enviar a mensagem</p>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>
