@@ -18,12 +18,14 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Plus, Server, DollarSign, Edit, Trash2, Coins, ExternalLink, Monitor, Wifi, Calendar, Users, Image, Sparkles, Search, Link, CheckCircle2, Smartphone } from 'lucide-react';
+import { Plus, Server, DollarSign, Edit, Trash2, Coins, ExternalLink, Monitor, Wifi, Calendar, Users, Image, Sparkles, Search, Link, CheckCircle2, Smartphone, Upload, FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ServerCreditClients } from '@/components/ServerCreditClients';
 import { ServerAppsManager } from '@/components/ServerAppsManager';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BulkImportServers } from '@/components/BulkImportServers';
+import { ServerImageUpload } from '@/components/ServerImageUpload';
+import { AdminServerTemplatesModal } from '@/components/AdminServerTemplatesModal';
 
 interface ServerData {
   id: string;
@@ -72,6 +74,7 @@ export default function Servers() {
   const [creditClientsServer, setCreditClientsServer] = useState<ServerData | null>(null);
   const [appsServer, setAppsServer] = useState<ServerData | null>(null);
   const [templateApplied, setTemplateApplied] = useState(false);
+  const [showAdminTemplatesModal, setShowAdminTemplatesModal] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     monthly_cost: '',
@@ -144,6 +147,21 @@ export default function Servers() {
       }
     }
   }, [serverTemplates, editingServer]);
+
+  // Handle template selection from modal
+  const handleSelectAdminTemplate = (template: { name: string; icon_url: string; panel_url?: string | null }) => {
+    setFormData(prev => ({
+      ...prev,
+      name: template.name,
+      icon_url: template.icon_url || '',
+      panel_url: template.panel_url || '',
+    }));
+    setTemplateApplied(true);
+    toast.success('Servidor do ADM selecionado!', {
+      description: 'Dados preenchidos automaticamente. Você pode editá-los.',
+      duration: 3000,
+    });
+  };
 
   // Debounce name changes
   useEffect(() => {
@@ -405,11 +423,24 @@ export default function Servers() {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+              {/* Admin Templates Button - Only show when creating new server */}
+              {!editingServer && serverTemplates.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2 border-primary/50 hover:bg-primary/10"
+                  onClick={() => setShowAdminTemplatesModal(true)}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  Ver Servidores do ADM
+                </Button>
+              )}
+
               {/* Icon Section */}
               <div className="space-y-3 p-4 rounded-lg border border-border bg-muted/30">
                 <Label className="flex items-center gap-2">
                   <Image className="h-4 w-4" />
-                  Ícone do Servidor
+                  Imagem do Servidor
                 </Label>
                 
                 {formData.icon_url && (
@@ -433,8 +464,12 @@ export default function Servers() {
                   </div>
                 )}
 
-                <Tabs defaultValue="url" className="w-full">
-                  <TabsList className="grid w-full grid-cols-3">
+                <Tabs defaultValue="upload" className="w-full">
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="upload" className="text-xs gap-1">
+                      <Upload className="h-3 w-3" />
+                      Upload
+                    </TabsTrigger>
                     <TabsTrigger value="url" className="text-xs gap-1">
                       <Link className="h-3 w-3" />
                       URL
@@ -445,9 +480,16 @@ export default function Servers() {
                     </TabsTrigger>
                     <TabsTrigger value="search" className="text-xs gap-1">
                       <Search className="h-3 w-3" />
-                      Buscar IA
+                      Buscar
                     </TabsTrigger>
                   </TabsList>
+                  
+                  <TabsContent value="upload" className="mt-3">
+                    <ServerImageUpload
+                      onUploadComplete={(url) => setFormData(prev => ({ ...prev, icon_url: url }))}
+                      currentImageUrl={formData.icon_url}
+                    />
+                  </TabsContent>
                   
                   <TabsContent value="url" className="space-y-2 mt-3">
                     <Input
@@ -455,9 +497,9 @@ export default function Servers() {
                       type="text"
                       value={formData.icon_url}
                       onChange={(e) => setFormData({ ...formData, icon_url: e.target.value })}
-                      placeholder="https://exemplo.com/icone.png ou /images/icone.png"
+                      placeholder="https://exemplo.com/icone.png"
                     />
-                    <p className="text-xs text-muted-foreground">Cole o link de uma imagem (URL ou caminho local)</p>
+                    <p className="text-xs text-muted-foreground">Cole o link de uma imagem</p>
                   </TabsContent>
                   
                   <TabsContent value="generate" className="space-y-2 mt-3">
@@ -986,6 +1028,13 @@ export default function Servers() {
           onClose={() => setAppsServer(null)}
         />
       )}
+
+      {/* Admin Server Templates Modal */}
+      <AdminServerTemplatesModal
+        open={showAdminTemplatesModal}
+        onOpenChange={setShowAdminTemplatesModal}
+        onSelectTemplate={handleSelectAdminTemplate}
+      />
     </div>
   );
 }
