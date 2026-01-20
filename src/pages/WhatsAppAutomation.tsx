@@ -65,6 +65,7 @@ StatusBadges.displayName = 'StatusBadges';
 
 export default function WhatsAppAutomation() {
   const { user, isAdmin } = useAuth();
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [isRunningAutomation, setIsRunningAutomation] = useState(false);
   const [isTestingOverdue, setIsTestingOverdue] = useState(false);
   const [testPreviewOpen, setTestPreviewOpen] = useState(false);
@@ -239,7 +240,7 @@ export default function WhatsAppAutomation() {
         )}
       </div>
 
-      <Tabs defaultValue="dashboard" className="space-y-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className={`grid w-full max-w-2xl ${isAdmin ? 'grid-cols-5' : 'grid-cols-3'}`}>
           <TabsTrigger value="dashboard" className="gap-2"><Users className="h-4 w-4" />Dashboard</TabsTrigger>
           <TabsTrigger value="queue" className="gap-2"><ListOrdered className="h-4 w-4" />Fila</TabsTrigger>

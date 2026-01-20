@@ -70,7 +70,8 @@ export function useChatbotCategories() {
           });
       }).finally(() => setIsLoading(false));
     }
-  }, [user, fetchCategories, createDefaultCategories]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const createCategory = async (category: Omit<ChatbotCategory, 'id' | 'seller_id' | 'created_at' | 'updated_at'>) => {
     if (!user) return { error: 'Not authenticated' };

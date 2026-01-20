@@ -199,7 +199,8 @@ export function useChatbotRules() {
         fetchInteractions(),
       ]).finally(() => setIsLoading(false));
     }
-  }, [user, fetchRules, fetchTemplates, fetchSettings, fetchContacts, fetchInteractions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // CRUD operations
   const createRule = async (rule: Omit<ChatbotRule, 'id' | 'seller_id' | 'created_at' | 'updated_at'>) => {

@@ -86,7 +86,8 @@ export function useChatbotFlows() {
       setIsLoading(true);
       Promise.all([fetchFlows(), fetchNodes()]).finally(() => setIsLoading(false));
     }
-  }, [user, fetchFlows, fetchNodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Build tree structure from flat nodes
   const buildNodeTree = (flowId: string): ChatbotFlowNode[] => {

@@ -27,16 +27,36 @@ export function useAdminChatbotConfig() {
   const [nodes, setNodes] = useState<ChatbotNode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchNodes = useCallback(async () => {
-    setIsLoading(true);
-    console.log('[AdminChatbot] Fetching nodes...');
-    
+  // Silent refresh - doesn't trigger loading state (prevents page flicker after save)
+  const refreshNodes = useCallback(async () => {
     const { data, error } = await supabase
       .from('admin_chatbot_config')
       .select('*')
       .order('sort_order');
 
-    console.log('[AdminChatbot] Fetch result:', { data, error, count: data?.length });
+    if (error) {
+      console.error('Error refreshing chatbot config:', error);
+      return;
+    }
+
+    const parsedNodes = (data || []).map(node => ({
+      ...node,
+      options: Array.isArray(node.options) 
+        ? (node.options as unknown as ChatbotOption[])
+        : []
+    })) as ChatbotNode[];
+
+    setNodes(parsedNodes);
+  }, []);
+
+  // Initial load with loading state
+  const fetchNodes = useCallback(async () => {
+    setIsLoading(true);
+    
+    const { data, error } = await supabase
+      .from('admin_chatbot_config')
+      .select('*')
+      .order('sort_order');
 
     if (error) {
       console.error('Error fetching chatbot config:', error);
@@ -45,7 +65,6 @@ export function useAdminChatbotConfig() {
       return;
     }
 
-    // Parse options from JSON
     const parsedNodes = (data || []).map(node => ({
       ...node,
       options: Array.isArray(node.options) 
@@ -93,7 +112,8 @@ export function useAdminChatbotConfig() {
       return { error: error.message };
     }
 
-    await fetchNodes();
+    // Use silent refresh to avoid page reload/flicker
+    await refreshNodes();
     toast.success('Menu criado com sucesso!');
     return { data };
   };
@@ -120,7 +140,8 @@ export function useAdminChatbotConfig() {
       return { error: error.message };
     }
 
-    await fetchNodes();
+    // Use silent refresh to avoid page reload/flicker
+    await refreshNodes();
     toast.success('Menu atualizado!');
     return { success: true };
   };
@@ -136,7 +157,8 @@ export function useAdminChatbotConfig() {
       return { error: error.message };
     }
 
-    await fetchNodes();
+    // Use silent refresh to avoid page reload/flicker
+    await refreshNodes();
     toast.success('Menu excluído!');
     return { success: true };
   };

@@ -80,6 +80,7 @@ const severityColors: Record<string, string> = {
 
 export default function SystemHealth() {
   const { isAdmin } = useAuth();
+  const [activeTab, setActiveTab] = useState('components');
   const {
     config,
     statuses,
@@ -228,7 +229,7 @@ export default function SystemHealth() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="components" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="components" className="gap-2">
               <Activity className="h-4 w-4" />
