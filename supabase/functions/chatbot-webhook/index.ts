@@ -1733,7 +1733,14 @@ serve(async (req) => {
     }
 
     const remoteJid = message.key.remoteJid;
-    const fromMe = message.key.fromMe;
+    // Some providers send fromMe as string/number (e.g. "false"), which is truthy and would break ignore_own_messages.
+    // Normalize it safely to a real boolean.
+    const fromMeRaw: unknown = (message.key as any).fromMe;
+    const fromMe =
+      fromMeRaw === true ||
+      fromMeRaw === 1 ||
+      fromMeRaw === "1" ||
+      (typeof fromMeRaw === "string" && fromMeRaw.toLowerCase().trim() === "true");
     const pushName = message.pushName || "";
 
     // Check for admin mode via URL param OR auto-detect by checking if seller is admin
