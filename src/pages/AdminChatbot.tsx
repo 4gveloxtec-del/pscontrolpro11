@@ -57,6 +57,9 @@ const ICON_OPTIONS = ['🏠', '📋', '💰', '🎁', '📱', '🍎', '🔥', '�
 export default function AdminChatbot() {
   const { nodes, isLoading, getNodeByKey, createNode, updateNode, deleteNode, processUserInput } = useAdminChatbotConfig();
   
+  // Tab state - controlled to persist selection after saves
+  const [activeTab, setActiveTab] = useState('simulator');
+  
   // Simulator state
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -534,7 +537,7 @@ export default function AdminChatbot() {
         </div>
       </div>
 
-      <Tabs defaultValue="simulator" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="bg-slate-800 border-slate-700">
           <TabsTrigger value="simulator" className="data-[state=active]:bg-blue-600">
             <Eye className="h-4 w-4 mr-2" />

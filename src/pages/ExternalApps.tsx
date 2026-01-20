@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ExternalAppsManager } from '@/components/ExternalAppsManager';
 import { ExternalAppsExpirationReport } from '@/components/ExternalAppsExpirationReport';
 import { AppWindow } from 'lucide-react';
@@ -5,6 +6,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Settings, Calendar } from 'lucide-react';
 
 export default function ExternalApps() {
+  const [activeTab, setActiveTab] = useState('apps');
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center gap-3">
@@ -19,7 +22,7 @@ export default function ExternalApps() {
         </div>
       </div>
 
-      <Tabs defaultValue="apps" className="w-full">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="apps" className="flex items-center gap-2">
             <Settings className="h-4 w-4" />

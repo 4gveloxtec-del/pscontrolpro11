@@ -17,6 +17,9 @@ interface AdminTrialSettingsProps {
 export function AdminTrialSettings({ onBack }: AdminTrialSettingsProps) {
   const queryClient = useQueryClient();
   
+  // Tab state - controlled to persist selection after saves
+  const [activeTab, setActiveTab] = useState('plans');
+  
   // Trial settings
   const [trialDays, setTrialDays] = useState('5');
   const [trialApiEnabled, setTrialApiEnabled] = useState(false);
@@ -137,7 +140,7 @@ export function AdminTrialSettings({ onBack }: AdminTrialSettingsProps) {
       </Alert>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Tabs defaultValue="plans" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="plans" className="gap-2">
               <DollarSign className="h-4 w-4" />
