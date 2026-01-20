@@ -38,6 +38,7 @@ const Reports = lazy(() => import("./pages/Reports"));
 const Backup = lazy(() => import("./pages/Backup"));
 const Settings = lazy(() => import("./pages/Settings"));
 const ExternalApps = lazy(() => import("./pages/ExternalApps"));
+const MyApps = lazy(() => import("./pages/MyApps"));
 const ServerIcons = lazy(() => import("./pages/ServerIcons"));
 const PanelResellers = lazy(() => import("./pages/PanelResellers"));
 const AdminServerTemplates = lazy(() => import("./pages/AdminServerTemplates"));
@@ -190,6 +191,7 @@ const AppRoutes = () => {
           <Route path="/referrals" element={<Referrals />} />
           <Route path="/message-history" element={<MessageHistory />} />
           <Route path="/external-apps" element={<ExternalApps />} />
+          <Route path="/my-apps" element={<MyApps />} />
           
           {/* Admin-only routes (legacy - mantidos para compatibilidade) */}
           <Route path="/sellers" element={

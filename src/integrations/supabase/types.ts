@@ -754,6 +754,45 @@ export type Database = {
         }
         Relationships: []
       }
+      client_device_apps: {
+        Row: {
+          app_id: string
+          client_id: string
+          created_at: string | null
+          id: string
+          seller_id: string
+        }
+        Insert: {
+          app_id: string
+          client_id: string
+          created_at?: string | null
+          id?: string
+          seller_id: string
+        }
+        Update: {
+          app_id?: string
+          client_id?: string
+          created_at?: string | null
+          id?: string
+          seller_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_device_apps_app_id_fkey"
+            columns: ["app_id"]
+            isOneToOne: false
+            referencedRelation: "reseller_device_apps"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_device_apps_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_external_apps: {
         Row: {
           client_id: string
@@ -1682,6 +1721,62 @@ export type Database = {
             columns: ["referrer_client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reseller_device_apps: {
+        Row: {
+          app_source: string
+          company_name: string | null
+          created_at: string | null
+          device_types: Json
+          download_url: string | null
+          icon: string | null
+          id: string
+          is_active: boolean
+          is_gerencia_app: boolean
+          name: string
+          seller_id: string
+          server_id: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          app_source?: string
+          company_name?: string | null
+          created_at?: string | null
+          device_types?: Json
+          download_url?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          is_gerencia_app?: boolean
+          name: string
+          seller_id: string
+          server_id?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          app_source?: string
+          company_name?: string | null
+          created_at?: string | null
+          device_types?: Json
+          download_url?: string | null
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          is_gerencia_app?: boolean
+          name?: string
+          seller_id?: string
+          server_id?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reseller_device_apps_server_id_fkey"
+            columns: ["server_id"]
+            isOneToOne: false
+            referencedRelation: "servers"
             referencedColumns: ["id"]
           },
         ]
