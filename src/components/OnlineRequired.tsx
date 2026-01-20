@@ -6,11 +6,22 @@ interface OnlineRequiredProps {
   children: ReactNode;
 }
 
+/**
+ * OnlineRequired - Graceful offline handling
+ * 
+ * This component shows a NON-BLOCKING notification when offline.
+ * The app continues to be usable (with limited functionality).
+ * This ensures the site works as a normal website first.
+ */
 export function OnlineRequired({ children }: OnlineRequiredProps) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const handleOnline = () => {
+      setIsOnline(true);
+      setDismissed(false);
+    };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
@@ -22,40 +33,49 @@ export function OnlineRequired({ children }: OnlineRequiredProps) {
     };
   }, []);
 
-  if (!isOnline) {
-    return (
-      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-6 p-8 text-center max-w-md">
-          <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
-            <WifiOff className="h-10 w-10 text-destructive" />
-          </div>
-          
-          <div className="space-y-2">
-            <h1 className="text-2xl font-bold text-foreground">
-              Sem conexão com a internet
-            </h1>
-            <p className="text-muted-foreground">
-              Este aplicativo requer conexão com a internet para funcionar.
-              Verifique sua conexão e tente novamente.
-            </p>
-          </div>
+  // Always render children - site works even offline (with limited functionality)
+  return (
+    <>
+      {children}
+      
+      {/* Non-blocking offline banner */}
+      {!isOnline && !dismissed && (
+        <div className="fixed bottom-4 left-4 right-4 z-50 md:left-auto md:right-4 md:max-w-sm">
+          <div className="bg-destructive/95 backdrop-blur-sm text-destructive-foreground p-4 rounded-lg shadow-lg border border-destructive/50">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-destructive-foreground/10 flex items-center justify-center flex-shrink-0">
+                <WifiOff className="h-5 w-5" />
+              </div>
+              
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm">Sem conexão</p>
+                <p className="text-xs opacity-90 mt-0.5">
+                  Algumas funcionalidades podem não funcionar.
+                </p>
+              </div>
 
-          <Button
-            onClick={() => window.location.reload()}
-            className="gap-2"
-            size="lg"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Tentar novamente
-          </Button>
-
-          <p className="text-xs text-muted-foreground">
-            Dica: Verifique se o Wi-Fi ou dados móveis estão ativados
-          </p>
+              <div className="flex gap-2 flex-shrink-0">
+                <Button
+                  onClick={() => window.location.reload()}
+                  size="sm"
+                  variant="secondary"
+                  className="h-8 px-2"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  onClick={() => setDismissed(true)}
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 px-2 hover:bg-destructive-foreground/10"
+                >
+                  ✕
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
+      )}
+    </>
+  );
 }

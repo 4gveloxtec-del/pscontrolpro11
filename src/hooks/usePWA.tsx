@@ -5,6 +5,13 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
+/**
+ * usePWA - Optional PWA functionality
+ * 
+ * This hook provides PWA install capabilities as an OPTIONAL feature.
+ * The website works perfectly without installing as PWA.
+ * Service worker registration is non-blocking and graceful.
+ */
 export function usePWA() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -13,30 +20,40 @@ export function usePWA() {
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
-    // Register service worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then((reg) => {
-          setRegistration(reg);
-          
-          // Check for updates
-          reg.addEventListener('updatefound', () => {
-            const newWorker = reg.installing;
-            if (newWorker) {
-              newWorker.addEventListener('statechange', () => {
-                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                  setUpdateAvailable(true);
-                }
-              });
-            }
-          });
-        })
-        .catch(console.error);
+    // Service worker registration is optional and non-blocking
+    const registerSW = async () => {
+      if (!('serviceWorker' in navigator)) return;
+      
+      try {
+        const reg = await navigator.serviceWorker.register('/sw.js', {
+          // Don't block page load
+          updateViaCache: 'none'
+        });
+        
+        setRegistration(reg);
+        
+        // Non-blocking update check
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                setUpdateAvailable(true);
+              }
+            });
+          }
+        });
+      } catch (error) {
+        // SW registration failed - site continues to work normally
+        console.log('[PWA] Service worker registration skipped:', error);
+      }
+    };
 
-      // Listen for controller change (update activated)
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        window.location.reload();
-      });
+    // Register SW after page load to not block initial render
+    if (document.readyState === 'complete') {
+      registerSW();
+    } else {
+      window.addEventListener('load', registerSW, { once: true });
     }
 
     // Check if already installed
@@ -94,6 +111,23 @@ export function usePWA() {
     }
   }, [registration]);
 
+  // Unregister service worker completely (if user wants to disable PWA features)
+  const unregisterSW = useCallback(async () => {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) {
+        await reg.unregister();
+      }
+      // Clear any remaining caches
+      const cacheNames = await caches.keys();
+      for (const name of cacheNames) {
+        await caches.delete(name);
+      }
+      return true;
+    }
+    return false;
+  }, []);
+
   return {
     canInstall: !!installPrompt && !isInstalled,
     isInstalled,
@@ -102,5 +136,6 @@ export function usePWA() {
     updateAvailable,
     checkForUpdates,
     applyUpdate,
+    unregisterSW,
   };
 }
