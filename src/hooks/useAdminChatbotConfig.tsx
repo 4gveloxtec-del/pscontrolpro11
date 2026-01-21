@@ -165,10 +165,20 @@ export function useAdminChatbotConfig() {
   };
 
   const processUserInput = useCallback((currentNodeKey: string, input: string): { nextNode: ChatbotNode | null; message: string } => {
+    // Guard against empty nodes - prevent potential issues
+    if (!nodes || nodes.length === 0) {
+      return { nextNode: null, message: '' };
+    }
+
     const normalizedInput = input.toLowerCase().trim();
     
+    // Guard against empty input
+    if (!normalizedInput) {
+      return { nextNode: null, message: '' };
+    }
+    
     // Check for return to main menu
-    if (normalizedInput === '*' || normalizedInput === 'voltar' || normalizedInput === 'menu') {
+    if (normalizedInput === '*' || normalizedInput === 'voltar' || normalizedInput === 'menu' || normalizedInput === '0') {
       const inicial = getNodeByKey('inicial');
       return { nextNode: inicial || null, message: inicial?.content || '' };
     }
@@ -189,6 +199,7 @@ export function useAdminChatbotConfig() {
       '6️⃣': '6', 'seis': '6', 'six': '6',
       '7️⃣': '7', 'sete': '7', 'seven': '7',
       '8️⃣': '8', 'oito': '8', 'eight': '8',
+      '9️⃣': '9', 'nove': '9', 'nine': '9',
     };
 
     let normalizedKey = normalizedInput;
@@ -199,9 +210,12 @@ export function useAdminChatbotConfig() {
       }
     }
 
-    // Find matching option
-    const matchedOption = currentNode.options.find(opt => opt.key === normalizedKey);
-    if (matchedOption) {
+    // Guard against undefined options array
+    const options = currentNode.options || [];
+    
+    // Find matching option - with null/undefined target guard
+    const matchedOption = options.find(opt => opt.key === normalizedKey);
+    if (matchedOption && matchedOption.target) {
       const targetNode = getNodeByKey(matchedOption.target);
       if (targetNode) {
         return { nextNode: targetNode, message: targetNode.content };
@@ -213,7 +227,7 @@ export function useAdminChatbotConfig() {
       nextNode: null, 
       message: '' 
     };
-  }, [getNodeByKey]);
+  }, [nodes, getNodeByKey]);
 
   return {
     nodes,

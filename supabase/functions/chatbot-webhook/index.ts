@@ -1,10 +1,72 @@
-import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// ========== TIMEOUT AND RETRY CONFIGURATION ==========
+const API_TIMEOUT_MS = 15000;
+const MAX_RETRIES = 2;
+
+// ========== FETCH WITH TIMEOUT ==========
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs = API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// ========== FETCH WITH RETRY ==========
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = MAX_RETRIES
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, options);
+      
+      // Don't retry client errors (4xx), only server errors (5xx)
+      if (response.ok || (response.status >= 400 && response.status < 500)) {
+        return response;
+      }
+      
+      // Server error - retry
+      if (attempt < maxRetries) {
+        console.log(`[Retry] Attempt ${attempt + 1} failed with ${response.status}, retrying...`);
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      
+      return response;
+    } catch (error: any) {
+      lastError = error;
+      
+      if (error.name === 'AbortError') {
+        console.log(`[Retry] Attempt ${attempt + 1} timed out`);
+      } else {
+        console.log(`[Retry] Attempt ${attempt + 1} error:`, error.message);
+      }
+      
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+    }
+  }
+  
+  throw lastError || new Error('Request failed after retries');
+}
 
 interface IncomingMessage {
   key: { remoteJid: string; fromMe: boolean };
@@ -32,7 +94,6 @@ interface WebhookPayload {
 type RawWebhookPayload = Record<string, unknown>;
 
 function normalizeWebhookPayload(raw: RawWebhookPayload): WebhookPayload {
-  // Evolution / Baileys payloads can vary a lot depending on version/config.
   const eventCandidate =
     (raw?.event as unknown) ??
     (raw?.type as unknown) ??
@@ -66,7 +127,6 @@ function normalizeWebhookPayload(raw: RawWebhookPayload): WebhookPayload {
     instance = String(rawInstanceCandidate || "");
   }
 
-  // Try to locate the actual message object
   let data: IncomingMessage | undefined = undefined;
   const candidates: unknown[] = [
     (raw as any)?.data,
@@ -185,7 +245,6 @@ interface GlobalConfig {
   is_active: boolean;
 }
 
-// Admin chatbot node structure
 interface AdminChatbotNode {
   id: string;
   node_key: string;
@@ -197,9 +256,9 @@ interface AdminChatbotNode {
   icon: string;
   sort_order: number;
   is_active: boolean;
+  image_url?: string;
 }
 
-// Admin chatbot contact tracking
 interface AdminChatbotContact {
   id: string;
   phone: string;
@@ -210,47 +269,51 @@ interface AdminChatbotContact {
   interaction_count: number;
 }
 
-// Helper: Get or create admin chatbot contact
+// ========== HELPER FUNCTIONS ==========
+
 async function getOrCreateAdminContact(
   supabase: any,
   phone: string,
   pushName: string
 ): Promise<AdminChatbotContact | null> {
-  let { data: contact } = await supabase
-    .from("admin_chatbot_contacts")
-    .select("*")
-    .eq("phone", phone)
-    .maybeSingle();
-
-  if (!contact) {
-    const { data: newContact, error } = await supabase
+  try {
+    let { data: contact } = await supabase
       .from("admin_chatbot_contacts")
-      .insert({
-        phone,
-        name: pushName,
-        current_node_key: "inicial",
-        interaction_count: 0,
-      })
-      .select()
-      .single();
+      .select("*")
+      .eq("phone", phone)
+      .maybeSingle();
 
-    if (error) {
-      console.error("Error creating admin contact:", error);
-      return null;
+    if (!contact) {
+      const { data: newContact, error } = await supabase
+        .from("admin_chatbot_contacts")
+        .insert({
+          phone,
+          name: pushName,
+          current_node_key: "inicial",
+          interaction_count: 0,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error creating admin contact:", error);
+        return null;
+      }
+      contact = newContact;
     }
-    contact = newContact;
-  }
 
-  return contact;
+    return contact;
+  } catch (error) {
+    console.error("[getOrCreateAdminContact] Error:", error);
+    return null;
+  }
 }
 
-// Helper: Check admin chatbot cooldown
 function canRespondAdmin(
   contact: AdminChatbotContact | null,
   responseMode: string,
   now: Date
 ): { canSend: boolean; reason?: string } {
-  // "always" mode - always respond (for testing)
   if (responseMode === "always") {
     return { canSend: true };
   }
@@ -262,17 +325,14 @@ function canRespondAdmin(
   const lastResponse = new Date(contact.last_response_at);
   const hoursSinceLastResponse = (now.getTime() - lastResponse.getTime()) / (1000 * 60 * 60);
 
-  // "6h" mode
   if (responseMode === "6h" && hoursSinceLastResponse < 6) {
     return { canSend: false, reason: "Cooldown 6h ainda ativo" };
   }
 
-  // "12h" mode
   if (responseMode === "12h" && hoursSinceLastResponse < 12) {
     return { canSend: false, reason: "Cooldown 12h ainda ativo" };
   }
 
-  // "24h" mode (default)
   if (responseMode === "24h" && hoursSinceLastResponse < 24) {
     return { canSend: false, reason: "Cooldown 24h ainda ativo" };
   }
@@ -280,12 +340,16 @@ function canRespondAdmin(
   return { canSend: true };
 }
 
-// Helper: Process admin chatbot input and find next node
 function processAdminInput(
   currentNodeKey: string,
   input: string,
   nodes: AdminChatbotNode[]
 ): { nextNode: AdminChatbotNode | null; message: string } {
+  // Guard against empty nodes array
+  if (!nodes || nodes.length === 0) {
+    return { nextNode: null, message: "" };
+  }
+
   const normalizedInput = input.toLowerCase().trim();
 
   // Check for return to main menu
@@ -321,23 +385,24 @@ function processAdminInput(
     }
   }
 
-  // Find matching option in current node
-  const matchedOption = currentNode.options.find(opt => opt.key === normalizedKey);
-  if (matchedOption) {
+  // Guard against undefined options
+  const options = currentNode.options || [];
+  const matchedOption = options.find(opt => opt.key === normalizedKey);
+  
+  if (matchedOption && matchedOption.target) {
     const targetNode = nodes.find(n => n.node_key === matchedOption.target);
     if (targetNode) {
       return { nextNode: targetNode, message: targetNode.content };
     }
   }
 
-  // No valid option found - return empty to indicate silence (ignore invalid input)
+  // No valid option found - return empty to indicate silence
   return {
     nextNode: null,
     message: ""
   };
 }
 
-// Process admin chatbot message
 async function processAdminChatbotMessage(
   supabase: any,
   globalConfig: GlobalConfig,
@@ -346,173 +411,175 @@ async function processAdminChatbotMessage(
   messageText: string,
   pushName: string
 ): Promise<{ status: string; reason?: string; sent?: boolean }> {
-  // Get admin chatbot settings
-  const { data: enabledSetting } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "admin_chatbot_enabled")
-    .maybeSingle();
+  try {
+    // Get admin chatbot settings
+    const { data: enabledSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "admin_chatbot_enabled")
+      .maybeSingle();
 
-  const isEnabled = enabledSetting?.value === "true";
-  if (!isEnabled) {
-    return { status: "ignored", reason: "Admin chatbot disabled" };
-  }
-
-  // Get response mode
-  const { data: modeSetting } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "admin_chatbot_response_mode")
-    .maybeSingle();
-
-  const responseMode = modeSetting?.value || "24h";
-
-  // Get chatbot delay settings
-  const { data: delayMinSetting } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "admin_chatbot_delay_min")
-    .maybeSingle();
-
-  const { data: delayMaxSetting } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "admin_chatbot_delay_max")
-    .maybeSingle();
-
-  const { data: typingSetting } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "admin_chatbot_typing_enabled")
-    .maybeSingle();
-
-  const delayMin = parseInt(delayMinSetting?.value || "2");
-  const delayMax = parseInt(delayMaxSetting?.value || "5");
-  const typingEnabled = typingSetting?.value !== "false";
-
-  // Get or create contact
-  const contact = await getOrCreateAdminContact(supabase, phone, pushName);
-  if (!contact) {
-    return { status: "error", reason: "Failed to get/create contact" };
-  }
-
-  // Check cooldown
-  const now = new Date();
-  const cooldownCheck = canRespondAdmin(contact, responseMode, now);
-  if (!cooldownCheck.canSend) {
-    console.log("[AdminChatbot] Cooldown active:", cooldownCheck.reason);
-    return { status: "blocked", reason: cooldownCheck.reason };
-  }
-
-  // Get all chatbot nodes
-  const { data: nodes } = await supabase
-    .from("admin_chatbot_config")
-    .select("*")
-    .eq("is_active", true)
-    .order("sort_order");
-
-  if (!nodes || nodes.length === 0) {
-    return { status: "ignored", reason: "No chatbot nodes configured" };
-  }
-
-  // Check for keyword match first
-  const { data: keywords } = await supabase
-    .from("admin_chatbot_keywords")
-    .select("*")
-    .eq("is_active", true);
-
-  const normalizedInput = messageText.toLowerCase().trim();
-  const matchedKeyword = keywords?.find((kw: any) => 
-    normalizedInput === kw.keyword.toLowerCase().trim()
-  );
-
-  let responseMessage = "";
-  let responseImageUrl = "";
-  let newNodeKey = contact.current_node_key || "inicial";
-
-  if (matchedKeyword) {
-    // Keyword match found - use keyword response
-    responseMessage = matchedKeyword.response_text;
-    responseImageUrl = matchedKeyword.image_url || "";
-    console.log("[AdminChatbot] Keyword match:", matchedKeyword.keyword);
-  } else {
-    // Process input through regular menu flow
-    const currentNodeKey = contact.current_node_key || "inicial";
-    const result = processAdminInput(currentNodeKey, messageText, nodes as AdminChatbotNode[]);
-
-    responseMessage = result.message;
-
-    if (result.nextNode) {
-      newNodeKey = result.nextNode.node_key;
-      // Check if the node has an image
-      responseImageUrl = (result.nextNode as any).image_url || "";
+    const isEnabled = enabledSetting?.value === "true";
+    if (!isEnabled) {
+      return { status: "ignored", reason: "Admin chatbot disabled" };
     }
+
+    // Get response mode
+    const { data: modeSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "admin_chatbot_response_mode")
+      .maybeSingle();
+
+    const responseMode = modeSetting?.value || "24h";
+
+    // Get chatbot delay settings
+    const { data: delayMinSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "admin_chatbot_delay_min")
+      .maybeSingle();
+
+    const { data: delayMaxSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "admin_chatbot_delay_max")
+      .maybeSingle();
+
+    const { data: typingSetting } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", "admin_chatbot_typing_enabled")
+      .maybeSingle();
+
+    const delayMin = parseInt(delayMinSetting?.value || "2");
+    const delayMax = parseInt(delayMaxSetting?.value || "5");
+    const typingEnabled = typingSetting?.value !== "false";
+
+    // Get or create contact
+    const contact = await getOrCreateAdminContact(supabase, phone, pushName);
+    if (!contact) {
+      return { status: "error", reason: "Failed to get/create contact" };
+    }
+
+    // Check cooldown
+    const now = new Date();
+    const cooldownCheck = canRespondAdmin(contact, responseMode, now);
+    if (!cooldownCheck.canSend) {
+      console.log("[AdminChatbot] Cooldown active:", cooldownCheck.reason);
+      return { status: "blocked", reason: cooldownCheck.reason };
+    }
+
+    // Get all chatbot nodes
+    const { data: nodes, error: nodesError } = await supabase
+      .from("admin_chatbot_config")
+      .select("*")
+      .eq("is_active", true)
+      .order("sort_order");
+
+    if (nodesError) {
+      console.error("[AdminChatbot] Error fetching nodes:", nodesError);
+      return { status: "error", reason: "Failed to fetch chatbot config" };
+    }
+
+    if (!nodes || nodes.length === 0) {
+      return { status: "ignored", reason: "No chatbot nodes configured" };
+    }
+
+    // Check for keyword match first
+    const { data: keywords } = await supabase
+      .from("admin_chatbot_keywords")
+      .select("*")
+      .eq("is_active", true);
+
+    const normalizedInput = messageText.toLowerCase().trim();
+    const matchedKeyword = keywords?.find((kw: any) => 
+      normalizedInput === kw.keyword.toLowerCase().trim()
+    );
+
+    let responseMessage = "";
+    let responseImageUrl = "";
+    let newNodeKey = contact.current_node_key || "inicial";
+
+    if (matchedKeyword) {
+      responseMessage = matchedKeyword.response_text;
+      responseImageUrl = matchedKeyword.image_url || "";
+      console.log("[AdminChatbot] Keyword match:", matchedKeyword.keyword);
+    } else {
+      const currentNodeKey = contact.current_node_key || "inicial";
+      const result = processAdminInput(currentNodeKey, messageText, nodes as AdminChatbotNode[]);
+
+      responseMessage = result.message;
+
+      if (result.nextNode) {
+        newNodeKey = result.nextNode.node_key;
+        responseImageUrl = result.nextNode.image_url || "";
+      }
+    }
+
+    // If no valid response (empty message), ignore silently
+    if (!responseMessage || responseMessage.trim() === "") {
+      console.log("[AdminChatbot] No valid response, ignoring message silently");
+      return { status: "ignored", reason: "Invalid option - silent mode" };
+    }
+
+    // Send typing status if enabled
+    if (typingEnabled) {
+      const typingDuration = getRandomDelay(delayMin, delayMax);
+      await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
+    } else {
+      const delay = getRandomDelay(delayMin, delayMax);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    // Send response (with image if provided)
+    let sent = false;
+    if (responseImageUrl) {
+      sent = await sendImageMessage(globalConfig, instanceName, phone, responseMessage, responseImageUrl);
+    } else {
+      sent = await sendTextMessage(globalConfig, instanceName, phone, responseMessage, supabase, undefined);
+    }
+
+    if (sent) {
+      // Update contact
+      await supabase
+        .from("admin_chatbot_contacts")
+        .update({
+          current_node_key: newNodeKey,
+          last_response_at: now.toISOString(),
+          last_interaction_at: now.toISOString(),
+          interaction_count: (contact.interaction_count || 0) + 1,
+          name: pushName || contact.name,
+        })
+        .eq("id", contact.id);
+
+      // Log interaction
+      await supabase.from("admin_chatbot_interactions").insert({
+        phone,
+        incoming_message: messageText,
+        response_sent: responseMessage,
+        node_key: newNodeKey,
+      });
+    }
+
+    return { status: sent ? "sent" : "failed", sent };
+  } catch (error: any) {
+    console.error("[processAdminChatbotMessage] Error:", error);
+    return { status: "error", reason: error.message };
   }
-
-  // If no valid response (empty message), ignore silently
-  if (!responseMessage || responseMessage.trim() === "") {
-    console.log("[AdminChatbot] No valid response, ignoring message silently");
-    return { status: "ignored", reason: "Invalid option - silent mode" };
-  }
-
-  // Send typing status if enabled
-  if (typingEnabled) {
-    const typingDuration = getRandomDelay(delayMin, delayMax);
-    await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
-  } else {
-    const delay = getRandomDelay(delayMin, delayMax);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-
-  // Send response (with image if provided)
-  let sent = false;
-  if (responseImageUrl) {
-    sent = await sendImageMessage(globalConfig, instanceName, phone, responseMessage, responseImageUrl);
-  } else {
-    sent = await sendTextMessage(globalConfig, instanceName, phone, responseMessage, supabase, undefined);
-  }
-
-  if (sent) {
-    // Update contact
-    await supabase
-      .from("admin_chatbot_contacts")
-      .update({
-        current_node_key: newNodeKey,
-        last_response_at: now.toISOString(),
-        last_interaction_at: now.toISOString(),
-        interaction_count: (contact.interaction_count || 0) + 1,
-        name: pushName || contact.name,
-      })
-      .eq("id", contact.id);
-
-    // Log interaction
-    await supabase.from("admin_chatbot_interactions").insert({
-      phone,
-      incoming_message: messageText,
-      response_sent: responseMessage,
-      node_key: newNodeKey,
-      keyword_matched: matchedKeyword?.keyword || null,
-    });
-  }
-
-  return { status: sent ? "sent" : "failed", sent };
 }
 
-// Helper: Extract phone number from remoteJid
 function extractPhone(remoteJid: string): string {
   return remoteJid.split("@")[0].replace(/\D/g, "");
 }
 
-// Helper: Check if it's a group message
 function isGroupMessage(remoteJid: string): boolean {
   return remoteJid.includes("@g.us");
 }
 
-// Helper: Extract text from message
 function extractMessageText(message: IncomingMessage["message"]): string | null {
   if (!message) return null;
   
-  // Ignore audio, video, sticker
   if (message.audioMessage || message.videoMessage || message.stickerMessage) {
     return null;
   }
@@ -520,12 +587,10 @@ function extractMessageText(message: IncomingMessage["message"]): string | null 
   if (message.conversation) return message.conversation;
   if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
   
-  // Button response
   if (message.buttonsResponseMessage?.selectedButtonId) {
     return `__BUTTON__:${message.buttonsResponseMessage.selectedButtonId}`;
   }
   
-  // List response
   if (message.listResponseMessage?.singleSelectReply?.selectedRowId) {
     return `__LIST__:${message.listResponseMessage.singleSelectReply.selectedRowId}`;
   }
@@ -533,18 +598,15 @@ function extractMessageText(message: IncomingMessage["message"]): string | null 
   return null;
 }
 
-// Helper: Random delay
 function getRandomDelay(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
 }
 
-// Helper: Check cooldown based on mode
 function canRespond(
   contact: ChatbotContact | null,
   rule: ChatbotRule,
   now: Date
 ): { canSend: boolean; reason?: string } {
-  // Free mode always responds
   if (rule.cooldown_mode === "free") {
     return { canSend: true };
   }
@@ -556,12 +618,10 @@ function canRespond(
   const lastResponse = new Date(contact.last_response_at);
   const hoursSinceLastResponse = (now.getTime() - lastResponse.getTime()) / (1000 * 60 * 60);
   
-  // Polite mode: 24h
   if (rule.cooldown_mode === "polite" && hoursSinceLastResponse < 24) {
     return { canSend: false, reason: "Cooldown 24h ainda ativo" };
   }
   
-  // Moderate mode: configurable
   if (rule.cooldown_mode === "moderate" && hoursSinceLastResponse < rule.cooldown_hours) {
     return { canSend: false, reason: `Cooldown ${rule.cooldown_hours}h ainda ativo` };
   }
@@ -569,7 +629,6 @@ function canRespond(
   return { canSend: true };
 }
 
-// Helper: Check if can send buttons/list (24h limit)
 function canSendInteractiveContent(
   contact: ChatbotContact | null,
   responseType: string,
@@ -592,19 +651,18 @@ function canSendInteractiveContent(
   return true;
 }
 
-// Helper: Find matching rule
 function findMatchingRule(
   rules: ChatbotRule[],
   messageText: string,
   contactStatus: string
 ): ChatbotRule | null {
+  if (!rules || rules.length === 0) return null;
+  
   const lowerMessage = messageText.toLowerCase().trim();
   
-  // Handle button/list responses - look for trigger matches
   if (lowerMessage.startsWith("__button__:") || lowerMessage.startsWith("__list__:")) {
     const triggerId = lowerMessage.split(":")[1];
     
-    // Find rule where the trigger matches
     for (const rule of rules) {
       if (rule.trigger_text.toLowerCase() === triggerId.toLowerCase()) {
         if (rule.contact_filter === "ALL" || rule.contact_filter === contactStatus) {
@@ -615,40 +673,33 @@ function findMatchingRule(
     return null;
   }
   
-  // Sort by priority (higher first), then by specificity (non-global first)
   const sortedRules = [...rules].sort((a, b) => {
     if (a.priority !== b.priority) return b.priority - a.priority;
     if (a.is_global_trigger !== b.is_global_trigger) return a.is_global_trigger ? 1 : -1;
     return 0;
   });
   
-  // First, try specific triggers
   for (const rule of sortedRules) {
     if (rule.is_global_trigger) continue;
     
-    // Check contact filter
     if (rule.contact_filter !== "ALL" && rule.contact_filter !== contactStatus) {
       continue;
     }
     
     const triggerLower = rule.trigger_text.toLowerCase().trim();
     
-    // Exact match or contains
     if (lowerMessage === triggerLower || lowerMessage.includes(triggerLower)) {
       return rule;
     }
   }
   
-  // No specific match found, try global triggers
   for (const rule of sortedRules) {
     if (!rule.is_global_trigger) continue;
     
-    // Check contact filter
     if (rule.contact_filter !== "ALL" && rule.contact_filter !== contactStatus) {
       continue;
     }
     
-    // Global triggers with asterisks
     if (rule.trigger_text === "*" || rule.trigger_text === "**" || rule.trigger_text === "***") {
       return rule;
     }
@@ -657,24 +708,27 @@ function findMatchingRule(
   return null;
 }
 
-// Helper: Get or create flow session for contact
 async function getFlowSession(
   supabase: any,
   sellerId: string,
   phone: string
 ): Promise<ChatbotFlowSession | null> {
-  const { data } = await supabase
-    .from("chatbot_flow_sessions")
-    .select("*")
-    .eq("seller_id", sellerId)
-    .eq("contact_phone", phone)
-    .eq("is_active", true)
-    .maybeSingle();
+  try {
+    const { data } = await supabase
+      .from("chatbot_flow_sessions")
+      .select("*")
+      .eq("seller_id", sellerId)
+      .eq("contact_phone", phone)
+      .eq("is_active", true)
+      .maybeSingle();
 
-  return data;
+    return data;
+  } catch (error) {
+    console.error("[getFlowSession] Error:", error);
+    return null;
+  }
 }
 
-// Helper: Build menu text from flow nodes
 function buildFlowMenuText(nodes: ChatbotFlowNode[], headerText?: string): string {
   const sortedNodes = [...nodes].sort((a, b) => a.sort_order - b.sort_order);
   
@@ -691,20 +745,19 @@ function buildFlowMenuText(nodes: ChatbotFlowNode[], headerText?: string): strin
   return menuText;
 }
 
-// Helper: Find node by option number within current context
 function findNodeByOption(
   nodes: ChatbotFlowNode[],
   optionNumber: string,
   parentNodeId: string | null
 ): ChatbotFlowNode | null {
+  if (!nodes || nodes.length === 0) return null;
+  
   const cleanOption = optionNumber.trim();
   
-  // Handle special commands
   if (cleanOption === "0" || cleanOption.toLowerCase() === "voltar") {
-    return null; // Will trigger go back logic
+    return null;
   }
   
-  // Find matching node at current level
   return nodes.find(
     (n) => 
       n.is_active && 
@@ -713,7 +766,6 @@ function findNodeByOption(
   ) || null;
 }
 
-// Helper: Process flow response
 async function processFlowNode(
   supabase: any,
   globalConfig: GlobalConfig,
@@ -725,168 +777,163 @@ async function processFlowNode(
   sellerId: string,
   chatbotSettings: ChatbotSettings
 ): Promise<{ sent: boolean; endSession: boolean; awaitHuman: boolean }> {
-  
-  // Send typing if enabled
-  if (chatbotSettings.typing_enabled) {
-    const typingDuration = getRandomDelay(
-      chatbotSettings.typing_duration_min,
-      chatbotSettings.typing_duration_max
-    );
-    await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
-  }
-
-  switch (node.response_type) {
-    case "text":
-    case "text_image": {
-      let sent = false;
-      if (node.response_type === "text_image" && node.response_content.image_url) {
-        sent = await sendImageMessage(
-          globalConfig,
-          instanceName,
-          phone,
-          node.response_content.text,
-          node.response_content.image_url
-        );
-      } else {
-        sent = await sendTextMessage(
-          globalConfig,
-          instanceName,
-          phone,
-          node.response_content.text,
-          supabase,
-          sellerId
-        );
-      }
-      return { sent, endSession: false, awaitHuman: false };
+  try {
+    if (chatbotSettings.typing_enabled) {
+      const typingDuration = getRandomDelay(
+        chatbotSettings.typing_duration_min,
+        chatbotSettings.typing_duration_max
+      );
+      await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
     }
 
-    case "submenu": {
-      // Get child nodes and display submenu
-      const childNodes = allNodes.filter(
-        (n) => n.parent_node_id === node.id && n.is_active
-      );
-      
-      if (childNodes.length === 0) {
-        // No children, just send the text
+    switch (node.response_type) {
+      case "text":
+      case "text_image": {
+        let sent = false;
+        if (node.response_type === "text_image" && node.response_content?.image_url) {
+          sent = await sendImageMessage(
+            globalConfig,
+            instanceName,
+            phone,
+            node.response_content.text || "",
+            node.response_content.image_url
+          );
+        } else {
+          sent = await sendTextMessage(
+            globalConfig,
+            instanceName,
+            phone,
+            node.response_content?.text || "",
+            supabase,
+            sellerId
+          );
+        }
+        return { sent, endSession: false, awaitHuman: false };
+      }
+
+      case "submenu": {
+        const childNodes = allNodes.filter(
+          (n) => n.parent_node_id === node.id && n.is_active
+        );
+        
+        if (childNodes.length === 0) {
+          const sent = await sendTextMessage(
+            globalConfig,
+            instanceName,
+            phone,
+            node.response_content?.text || "",
+            supabase,
+            sellerId
+          );
+          return { sent, endSession: false, awaitHuman: false };
+        }
+
+        const menuText = buildFlowMenuText(childNodes, (node.response_content?.text || "") + "\n\n");
+        const menuWithBack = menuText + "\n*0* - Voltar ao menu anterior";
+        
         const sent = await sendTextMessage(
           globalConfig,
           instanceName,
           phone,
-          node.response_content.text,
+          menuWithBack,
+          supabase,
+          sellerId
+        );
+
+        await supabase
+          .from("chatbot_flow_sessions")
+          .update({
+            current_node_id: node.id,
+            last_interaction_at: new Date().toISOString(),
+          })
+          .eq("id", session.id);
+
+        return { sent, endSession: false, awaitHuman: false };
+      }
+
+      case "template": {
+        if (node.template_id) {
+          const { data: template } = await supabase
+            .from("chatbot_templates")
+            .select("response_content, response_type")
+            .eq("id", node.template_id)
+            .maybeSingle();
+
+          if (template) {
+            const sent = await sendTextMessage(
+              globalConfig,
+              instanceName,
+              phone,
+              template.response_content?.text || node.response_content?.text || "",
+              supabase,
+              sellerId
+            );
+            return { sent, endSession: false, awaitHuman: false };
+          }
+        }
+        
+        const sent = await sendTextMessage(
+          globalConfig,
+          instanceName,
+          phone,
+          node.response_content?.text || "",
           supabase,
           sellerId
         );
         return { sent, endSession: false, awaitHuman: false };
       }
 
-      // Build submenu text
-      const menuText = buildFlowMenuText(childNodes, node.response_content.text + "\n\n");
-      const menuWithBack = menuText + "\n*0* - Voltar ao menu anterior";
-      
-      const sent = await sendTextMessage(
-        globalConfig,
-        instanceName,
-        phone,
-        menuWithBack,
-        supabase,
-        sellerId
-      );
+      case "human_transfer": {
+        const sent = await sendTextMessage(
+          globalConfig,
+          instanceName,
+          phone,
+          node.response_content?.text || "Aguarde, você será atendido por um de nossos atendentes.",
+          supabase,
+          sellerId
+        );
 
-      // Update session to current node
-      await supabase
-        .from("chatbot_flow_sessions")
-        .update({
-          current_node_id: node.id,
-          last_interaction_at: new Date().toISOString(),
-        })
-        .eq("id", session.id);
+        await supabase
+          .from("chatbot_flow_sessions")
+          .update({
+            awaiting_human: true,
+            last_interaction_at: new Date().toISOString(),
+          })
+          .eq("id", session.id);
 
-      return { sent, endSession: false, awaitHuman: false };
-    }
-
-    case "template": {
-      // Fetch template and send its content
-      if (node.template_id) {
-        const { data: template } = await supabase
-          .from("chatbot_templates")
-          .select("response_content, response_type")
-          .eq("id", node.template_id)
-          .maybeSingle();
-
-        if (template) {
-          const sent = await sendTextMessage(
-            globalConfig,
-            instanceName,
-            phone,
-            template.response_content?.text || node.response_content.text,
-            supabase,
-            sellerId
-          );
-          return { sent, endSession: false, awaitHuman: false };
-        }
+        return { sent, endSession: false, awaitHuman: true };
       }
-      
-      // Fallback to node text
-      const sent = await sendTextMessage(
-        globalConfig,
-        instanceName,
-        phone,
-        node.response_content.text,
-        supabase,
-        sellerId
-      );
-      return { sent, endSession: false, awaitHuman: false };
+
+      case "end_chat": {
+        const sent = await sendTextMessage(
+          globalConfig,
+          instanceName,
+          phone,
+          node.response_content?.text || "Obrigado pelo contato! Até a próxima.",
+          supabase,
+          sellerId
+        );
+
+        await supabase
+          .from("chatbot_flow_sessions")
+          .update({
+            is_active: false,
+            last_interaction_at: new Date().toISOString(),
+          })
+          .eq("id", session.id);
+
+        return { sent, endSession: true, awaitHuman: false };
+      }
+
+      default:
+        return { sent: false, endSession: false, awaitHuman: false };
     }
-
-    case "human_transfer": {
-      const sent = await sendTextMessage(
-        globalConfig,
-        instanceName,
-        phone,
-        node.response_content.text || "Aguarde, você será atendido por um de nossos atendentes.",
-        supabase,
-        sellerId
-      );
-
-      // Mark session as awaiting human
-      await supabase
-        .from("chatbot_flow_sessions")
-        .update({
-          awaiting_human: true,
-          last_interaction_at: new Date().toISOString(),
-        })
-        .eq("id", session.id);
-
-      return { sent, endSession: false, awaitHuman: true };
-    }
-
-    case "end_chat": {
-      const sent = await sendTextMessage(
-        globalConfig,
-        instanceName,
-        phone,
-        node.response_content.text || "Obrigado pelo contato! Até a próxima.",
-        supabase,
-        sellerId
-      );
-
-      // End session
-      await supabase
-        .from("chatbot_flow_sessions")
-        .update({
-          is_active: false,
-          last_interaction_at: new Date().toISOString(),
-        })
-        .eq("id", session.id);
-
-      return { sent, endSession: true, awaitHuman: false };
-    }
-
-    default:
-      return { sent: false, endSession: false, awaitHuman: false };
+  } catch (error) {
+    console.error("[processFlowNode] Error:", error);
+    return { sent: false, endSession: false, awaitHuman: false };
   }
 }
-// Helper: Clean and normalize API URL (prevents /manager mistakes)
+
 function normalizeApiUrl(url: string): string {
   let cleanUrl = url.trim();
   cleanUrl = cleanUrl.replace(/\/manager\/?$/i, "");
@@ -899,7 +946,6 @@ function formatPhone(phone: string): string {
 
   if (formatted.startsWith("55")) return formatted;
 
-  // Brazilian local numbers (DDD + number)
   if (formatted.length === 10 || formatted.length === 11) {
     return `55${formatted}`;
   }
@@ -919,11 +965,10 @@ async function auditWebhook(
       new_data: payload,
     });
   } catch (e) {
-    console.log("auditWebhook failed", e);
+    // Silent fail for audit - don't break main flow
   }
 }
 
-// Send "typing" status via Evolution API
 async function sendTypingStatus(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -934,7 +979,6 @@ async function sendTypingStatus(
     const baseUrl = normalizeApiUrl(globalConfig.api_url);
     const formattedPhone = formatPhone(phone);
     
-    // Try different endpoints for typing status
     const endpoints = [
       `${baseUrl}/chat/sendPresence/${instanceName}`,
       `${baseUrl}/message/sendPresence/${instanceName}`,
@@ -945,9 +989,7 @@ async function sendTypingStatus(
     
     for (const url of endpoints) {
       try {
-        console.log(`[sendTypingStatus] Trying: ${url}`);
-        
-        const response = await fetch(url, {
+        const response = await fetchWithTimeout(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -958,20 +1000,18 @@ async function sendTypingStatus(
             presence: "composing",
             delay: durationMs,
           }),
-        });
+        }, 5000); // 5s timeout for typing
 
         if (response.ok) {
-          console.log(`[sendTypingStatus] Success with: ${url}`);
           sent = true;
           break;
         }
       } catch (e) {
-        console.log(`[sendTypingStatus] Failed with: ${url}`);
+        // Try next endpoint
       }
     }
 
     if (sent) {
-      // Wait for typing duration
       await new Promise((resolve) => setTimeout(resolve, durationMs));
     }
 
@@ -982,7 +1022,6 @@ async function sendTypingStatus(
   }
 }
 
-// Validate API connection before sending
 async function validateApiConnection(
   globalConfig: GlobalConfig,
   instanceName: string
@@ -991,25 +1030,20 @@ async function validateApiConnection(
     const baseUrl = normalizeApiUrl(globalConfig.api_url);
     const url = `${baseUrl}/instance/connectionState/${instanceName}`;
 
-    console.log(`[validateApiConnection] Checking: ${url}`);
-
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: "GET",
       headers: {
         apikey: globalConfig.api_token,
       },
-    });
+    }, 10000);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.log(`[validateApiConnection] API error: ${response.status} - ${errorText}`);
       return { connected: false, error: `API retornou ${response.status}: ${errorText}` };
     }
 
     const data = await response.json();
     const state = data?.instance?.state || data?.state || data?.connectionState;
-    
-    console.log(`[validateApiConnection] State: ${state}`);
     
     if (state === "open" || state === "connected") {
       return { connected: true };
@@ -1017,12 +1051,13 @@ async function validateApiConnection(
 
     return { connected: false, error: `Instância não conectada: ${state}` };
   } catch (error: any) {
-    console.error("[validateApiConnection] Error:", error);
+    if (error.name === 'AbortError') {
+      return { connected: false, error: "Timeout ao verificar conexão" };
+    }
     return { connected: false, error: error.message };
   }
 }
 
-// Log send attempt to database
 async function logSendAttempt(
   supabase: any,
   sellerId: string,
@@ -1046,11 +1081,10 @@ async function logSendAttempt(
       error_message: errorMessage,
     });
   } catch (e) {
-    console.log("[logSendAttempt] Failed to log:", e);
+    // Silent fail
   }
 }
 
-// Send text message via Evolution API
 async function sendTextMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -1064,11 +1098,7 @@ async function sendTextMessage(
     const formattedPhone = formatPhone(phone);
     const url = `${baseUrl}/message/sendText/${instanceName}`;
 
-    console.log(`[sendTextMessage] URL: ${url}`);
-    console.log(`[sendTextMessage] Phone: ${formattedPhone}`);
-    console.log(`[sendTextMessage] Instance: ${instanceName}`);
-
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1081,9 +1111,7 @@ async function sendTextMessage(
     });
 
     const responseText = await response.text();
-    console.log(`[sendTextMessage] Response: ${response.status} - ${responseText}`);
     
-    // Log the attempt
     if (supabase && sellerId) {
       await logSendAttempt(
         supabase,
@@ -1120,7 +1148,6 @@ async function sendTextMessage(
   }
 }
 
-// Send image with caption via Evolution API
 async function sendImageMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -1133,7 +1160,7 @@ async function sendImageMessage(
     const formattedPhone = formatPhone(phone);
     const url = `${baseUrl}/message/sendMedia/${instanceName}`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1147,15 +1174,13 @@ async function sendImageMessage(
       }),
     });
 
-    console.log(`Image message sent to ${formattedPhone}: ${response.ok}`);
     return response.ok;
   } catch (error) {
-    console.error("Error sending image:", error);
+    console.error("[sendImageMessage] Error:", error);
     return false;
   }
 }
 
-// Send buttons message via Evolution API v2
 async function sendButtonsMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -1164,26 +1189,20 @@ async function sendButtonsMessage(
   buttons: Array<{ id: string; text: string }>
 ): Promise<boolean> {
   try {
-    // Evolution API v2 uses sendTemplate or sendButtons with different format
-    // Try the v2 format first
     const baseUrl = normalizeApiUrl(globalConfig.api_url);
     const formattedPhone = formatPhone(phone);
     
-    // Try native buttons first (some versions support it)
     const buttonsUrl = `${baseUrl}/message/sendButtons/${instanceName}`;
     
     const formattedButtons = buttons.slice(0, 3).map((btn, index) => ({
       type: "reply",
       reply: {
         id: btn.id || `btn_${index}`,
-        title: btn.text.slice(0, 20) // WhatsApp button limit
+        title: btn.text.slice(0, 20)
       }
     }));
     
-    console.log(`Sending buttons to ${formattedPhone} via ${buttonsUrl}`);
-    console.log("Buttons payload:", JSON.stringify(formattedButtons));
-    
-    const response = await fetch(buttonsUrl, {
+    const response = await fetchWithRetry(buttonsUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1196,16 +1215,11 @@ async function sendButtonsMessage(
       }),
     });
     
-    const responseText = await response.text();
-    console.log(`Buttons API response: ${response.status} - ${responseText}`);
-    
     if (response.ok) {
       return true;
     }
     
-    // If native buttons fail, try interactive buttons format
-    console.log("Native buttons failed, trying interactive format...");
-    
+    // Try interactive format
     const interactiveUrl = `${baseUrl}/message/sendWhatsAppInteractive/${instanceName}`;
     
     const interactivePayload = {
@@ -1227,9 +1241,7 @@ async function sendButtonsMessage(
       }
     };
     
-    console.log("Interactive payload:", JSON.stringify(interactivePayload));
-    
-    const interactiveResponse = await fetch(interactiveUrl, {
+    const interactiveResponse = await fetchWithRetry(interactiveUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1238,26 +1250,20 @@ async function sendButtonsMessage(
       body: JSON.stringify(interactivePayload),
     });
     
-    const interactiveText = await interactiveResponse.text();
-    console.log(`Interactive API response: ${interactiveResponse.status} - ${interactiveText}`);
-    
     if (interactiveResponse.ok) {
       return true;
     }
     
-    // Last resort: send as regular text with emoji buttons
-    console.log("Interactive also failed, sending as text with options...");
-    
+    // Fallback to text with emoji buttons
     const textWithButtons = `${text}\n\n${buttons.map((btn, i) => `${i + 1}️⃣ ${btn.text}`).join('\n')}\n\n_Responda com o número da opção desejada._`;
     
     return await sendTextMessage(globalConfig, instanceName, phone, textWithButtons);
   } catch (error) {
-    console.error("Error sending buttons:", error);
+    console.error("[sendButtonsMessage] Error:", error);
     return false;
   }
 }
 
-// Send list message via Evolution API v2
 async function sendListMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -1273,22 +1279,18 @@ async function sendListMessage(
     const baseUrl = normalizeApiUrl(globalConfig.api_url);
     const formattedPhone = formatPhone(phone);
     
-    // Try native list endpoint first
     const listUrl = `${baseUrl}/message/sendList/${instanceName}`;
     
     const formattedSections = sections.map((section) => ({
-      title: section.title.slice(0, 24), // WhatsApp section title limit
+      title: section.title.slice(0, 24),
       rows: section.items.slice(0, 10).map((item) => ({
         rowId: item.id,
-        title: item.title.slice(0, 24), // WhatsApp row title limit
-        description: (item.description || "").slice(0, 72), // WhatsApp description limit
+        title: item.title.slice(0, 24),
+        description: (item.description || "").slice(0, 72),
       })),
     }));
     
-    console.log(`Sending list to ${formattedPhone} via ${listUrl}`);
-    console.log("List sections:", JSON.stringify(formattedSections));
-    
-    const response = await fetch(listUrl, {
+    const response = await fetchWithRetry(listUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1298,22 +1300,17 @@ async function sendListMessage(
         number: formattedPhone,
         title: "Menu",
         description: text,
-        buttonText: buttonText.slice(0, 20), // WhatsApp button text limit
+        buttonText: buttonText.slice(0, 20),
         footerText: "",
         sections: formattedSections,
       }),
     });
-    
-    const responseText = await response.text();
-    console.log(`List API response: ${response.status} - ${responseText}`);
     
     if (response.ok) {
       return true;
     }
     
     // Try interactive list format
-    console.log("Native list failed, trying interactive format...");
-    
     const interactiveUrl = `${baseUrl}/message/sendWhatsAppInteractive/${instanceName}`;
     
     const interactivePayload = {
@@ -1337,9 +1334,7 @@ async function sendListMessage(
       }
     };
     
-    console.log("Interactive list payload:", JSON.stringify(interactivePayload));
-    
-    const interactiveResponse = await fetch(interactiveUrl, {
+    const interactiveResponse = await fetchWithRetry(interactiveUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1348,16 +1343,11 @@ async function sendListMessage(
       body: JSON.stringify(interactivePayload),
     });
     
-    const interactiveText = await interactiveResponse.text();
-    console.log(`Interactive list API response: ${interactiveResponse.status} - ${interactiveText}`);
-    
     if (interactiveResponse.ok) {
       return true;
     }
     
-    // Last resort: send as regular text with numbered list
-    console.log("Interactive list also failed, sending as text with options...");
-    
+    // Fallback to text with numbered list
     let textWithList = `${text}\n\n📋 *Opções disponíveis:*\n`;
     sections.forEach(section => {
       textWithList += `\n*${section.title}*\n`;
@@ -1369,13 +1359,13 @@ async function sendListMessage(
     
     return await sendTextMessage(globalConfig, instanceName, phone, textWithList);
   } catch (error) {
-    console.error("Error sending list:", error);
+    console.error("[sendListMessage] Error:", error);
     return false;
   }
 }
 
-serve(async (req) => {
-  // Handle CORS
+// ========== MAIN HANDLER ==========
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -1385,11 +1375,9 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Diagnostic endpoint: GET request returns debug info
+    // Diagnostic endpoint
     if (req.method === "GET") {
-      // Parse URL - handle edge case where ? is encoded as %3F
       let rawUrl = req.url;
-      // If %3F exists (encoded ?), decode it for proper parsing
       if (rawUrl.includes("%3F")) {
         rawUrl = rawUrl.replace(/%3F/g, "?").replace(/%26/g, "&").replace(/%3D/g, "=");
       }
@@ -1401,7 +1389,6 @@ serve(async (req) => {
         parsedUrl = new URL(rawUrl, "https://placeholder.co");
       }
 
-      // Quick ping endpoint to check if webhook is online
       const ping = parsedUrl.searchParams.get("ping");
       if (ping === "true") {
         return new Response(
@@ -1409,299 +1396,50 @@ serve(async (req) => {
             status: "ok", 
             message: "Chatbot webhook is online",
             timestamp: new Date().toISOString(),
-            version: "2.0.0",
+            version: "2.1.0",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const testApi = parsedUrl.searchParams.get("test_api") === "true";
-      const testSend = parsedUrl.searchParams.get("test_send") === "true";
-      const testPhone = parsedUrl.searchParams.get("phone") || "";
-      const testText = parsedUrl.searchParams.get("text") || "Teste do chatbot";
-      const testInstance = parsedUrl.searchParams.get("instance") || "";
-
-      console.log(`[Diag] Raw URL: ${req.url}`);
-      console.log(`[Diag] Parsed URL: ${rawUrl}`);
-      console.log(`[Diag] test_api=${testApi}, test_send=${testSend}, phone=${testPhone}, instance=${testInstance}`);
-
-      const { data: instances } = await supabase
-        .from("whatsapp_seller_instances")
-        .select("instance_name, seller_id, is_connected, instance_blocked, plan_status");
-
-      // Always read the most recently updated config row (some projects accidentally create multiple rows)
-      const {
-        data: globalConfig,
-        error: globalConfigError,
-      } = await supabase
-        .from("whatsapp_global_config")
-        .select("api_url, api_token, is_active, updated_at")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      // Check for specific instance diagnosis
-      const diagnoseInstance = parsedUrl.searchParams.get("diagnose") || "";
-      
-      const { data: chatbotSettings } = await supabase
-        .from("chatbot_settings")
-        .select("seller_id, is_enabled, ignore_groups, ignore_own_messages, typing_enabled");
-
-      const { data: chatbotRules } = await supabase
-        .from("chatbot_rules")
-        .select("seller_id, name, is_active, trigger_text, response_type, is_global_trigger, priority");
-      
-      const { data: chatbotFlows } = await supabase
-        .from("chatbot_flows")
-        .select("seller_id, name, is_active, is_main_menu");
-      
-      // If diagnose parameter is provided, show detailed info for that instance
-      let diagnosisResult: any = null;
-      if (diagnoseInstance) {
-        const matchedInstance = instances?.find(
-          (i: any) => i.instance_name.toLowerCase() === diagnoseInstance.toLowerCase()
-        );
-        
-        if (!matchedInstance) {
-          diagnosisResult = {
-            status: "ERROR",
-            message: `Instância "${diagnoseInstance}" NÃO encontrada no banco de dados`,
-            available_instances: instances?.map((i: any) => i.instance_name) || [],
-            action_required: "Configure o nome da instância em WhatsApp Automação → Config",
-          };
-        } else {
-          const sellerId = matchedInstance.seller_id;
-          const sellerSettings = chatbotSettings?.find((s: any) => s.seller_id === sellerId);
-          const sellerRules = chatbotRules?.filter((r: any) => r.seller_id === sellerId && r.is_active) || [];
-          const sellerFlows = chatbotFlows?.filter((f: any) => f.seller_id === sellerId && f.is_active) || [];
-          
-          const problems: string[] = [];
-          
-          if (matchedInstance.instance_blocked) {
-            problems.push("❌ Instância está BLOQUEADA");
-          }
-          if (!matchedInstance.is_connected) {
-            problems.push("⚠️ Instância não está conectada");
-          }
-          if (!sellerSettings) {
-            problems.push("❌ Configurações do chatbot não encontradas - acesse Chatbot → Configurações");
-          } else if (!sellerSettings.is_enabled) {
-            problems.push("❌ Chatbot está DESATIVADO - ative em Chatbot → Configurações");
-          }
-          if (sellerRules.length === 0 && sellerFlows.length === 0) {
-            problems.push("⚠️ Nenhuma regra ou fluxo ativo - crie regras em Chatbot → Regras");
-          }
-          
-          diagnosisResult = {
-            status: problems.length === 0 ? "OK" : "PROBLEMS_FOUND",
-            instance: {
-              name: matchedInstance.instance_name,
-              is_connected: matchedInstance.is_connected,
-              is_blocked: matchedInstance.instance_blocked,
-              plan_status: matchedInstance.plan_status,
-            },
-            chatbot: {
-              is_enabled: sellerSettings?.is_enabled ?? false,
-              settings: sellerSettings || null,
-            },
-            rules: {
-              total_active: sellerRules.length,
-              list: sellerRules.map((r: any) => ({
-                name: r.name,
-                trigger: r.trigger_text,
-                type: r.response_type,
-                is_global: r.is_global_trigger,
-                priority: r.priority,
-              })),
-            },
-            flows: {
-              total_active: sellerFlows.length,
-              has_main_menu: sellerFlows.some((f: any) => f.is_main_menu),
-              list: sellerFlows.map((f: any) => ({
-                name: f.name,
-                is_main_menu: f.is_main_menu,
-              })),
-            },
-            problems,
-            action_required: problems.length > 0 
-              ? problems.join(" | ") 
-              : "Tudo OK! O chatbot deve responder às mensagens.",
-          };
-        }
-      }
-
-      let apiTestResult: any = null;
-      let sendTestResult: any = null;
-
-      const configOk = Boolean(globalConfig?.api_url && globalConfig?.api_token);
-
-      // Test API connection if requested
-      if (testApi && configOk) {
-        try {
-          const baseUrl = normalizeApiUrl(globalConfig!.api_url);
-          const testUrl = `${baseUrl}/instance/fetchInstances`;
-
-          console.log(`[API Test] Testing URL: ${testUrl}`);
-          console.log(`[API Test] Token length: ${globalConfig!.api_token.length}`);
-
-          const testResponse = await fetch(testUrl, {
-            method: "GET",
-            headers: {
-              apikey: globalConfig!.api_token.trim(),
-            },
-          });
-
-          const testResponseText = await testResponse.text();
-          console.log(`[API Test] Response status: ${testResponse.status}`);
-          console.log(`[API Test] Response body: ${testResponseText.substring(0, 500)}`);
-
-          apiTestResult = {
-            url_tested: testUrl,
-            status: testResponse.status,
-            status_text: testResponse.statusText,
-            is_ok: testResponse.ok,
-            response_preview: testResponseText.substring(0, 300),
-            token_length: globalConfig!.api_token.length,
-          };
-        } catch (error: any) {
-          apiTestResult = {
-            error: error.message,
-            url_configured: globalConfig?.api_url,
-          };
-        }
-      }
-
-      // Test sending a text message (does NOT expose token; requires explicit phone)
-      if (testSend && configOk) {
-        const instanceToUse =
-          testInstance ||
-          instances?.find((i: any) => !i.instance_blocked)?.instance_name ||
-          "";
-
-        if (!instanceToUse) {
-          sendTestResult = { error: "Nenhuma instância disponível para teste" };
-        } else if (!testPhone) {
-          sendTestResult = { error: "Informe o parâmetro ?phone=5511... para testar envio" };
-        } else {
-          try {
-            const baseUrl = normalizeApiUrl(globalConfig!.api_url);
-            const urlSend = `${baseUrl}/message/sendText/${instanceToUse}`;
-            const formattedPhone = formatPhone(testPhone);
-
-            console.log(`[Send Test] Testing sendText URL: ${urlSend}`);
-            console.log(`[Send Test] Phone: ${formattedPhone}`);
-            console.log(`[Send Test] Instance: ${instanceToUse}`);
-
-            const r = await fetch(urlSend, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                apikey: globalConfig!.api_token.trim(),
-              },
-              body: JSON.stringify({ number: formattedPhone, text: testText }),
-            });
-
-            const bodyText = await r.text();
-            sendTestResult = {
-              url_tested: urlSend,
-              status: r.status,
-              status_text: r.statusText,
-              is_ok: r.ok,
-              response_preview: bodyText.substring(0, 500),
-              instance_used: instanceToUse,
-              phone_used: formattedPhone,
-            };
-          } catch (e: any) {
-            sendTestResult = { error: e.message };
-          }
-        }
-      }
-
+      // Simplified diagnostic response
       return new Response(
-        JSON.stringify(
-          {
-            status: "diagnostic",
-            debug_raw_url: req.url,
-            query: {
-              test_api: testApi,
-              test_send: testSend,
-              diagnose: diagnoseInstance || null,
-              instance: testInstance || null,
-              phone: testPhone ? "(provided)" : null,
-              text: testText !== "Teste do chatbot" ? "(custom)" : "(default)",
-            },
-            // If diagnosing a specific instance, show only that result prominently
-            diagnosis: diagnosisResult,
-            instances: instances || [],
-            globalConfig: globalConfig
-              ? {
-                  api_url: globalConfig.api_url,
-                  is_active: globalConfig.is_active,
-                  token_configured: Boolean(globalConfig.api_token),
-                  token_length: globalConfig.api_token?.length || 0,
-                  selected_row_is_latest: true,
-                }
-              : null,
-            globalConfigError: globalConfigError?.message || null,
-            chatbotSettings: chatbotSettings || [],
-            chatbotRules: chatbotRules || [],
-            chatbotFlows: chatbotFlows || [],
-            apiTestResult,
-            sendTestResult,
-          },
-          null,
-          2
-        ),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        JSON.stringify({ 
+          status: "ok",
+          message: "Chatbot webhook ready",
+          version: "2.1.0",
+          usage: "Send POST with Evolution API webhook payload",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Parse webhook payload (normalize across versions)
-    let rawPayload: Record<string, unknown> | null = null;
+    // Parse webhook payload
+    let rawPayload: RawWebhookPayload;
     try {
-      rawPayload = (await req.json()) as Record<string, unknown>;
-    } catch {
-      rawPayload = null;
+      rawPayload = await req.json();
+    } catch (error) {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON payload" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    if (!rawPayload) {
-      return new Response(JSON.stringify({ status: "ignored", reason: "Invalid JSON" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const payload = normalizeWebhookPayload(rawPayload);
 
-    const payload: WebhookPayload = normalizeWebhookPayload(rawPayload);
+    // Filter for message events
+    const messageEvents = [
+      "messages.upsert",
+      "message",
+      "message.received",
+      "received",
+      "incoming",
+    ];
+    
+    const eventLower = (payload.event || "").toLowerCase();
+    const isMessageEvent = messageEvents.some(e => eventLower.includes(e.toLowerCase()));
 
-    console.log(
-      "Webhook received:",
-      JSON.stringify(
-        {
-          event: payload.event,
-          instance: payload.instance,
-          hasData: Boolean(payload.data),
-        },
-        null,
-        2
-      )
-    );
-
-    // Only process incoming messages (but some providers omit `event`)
-    // Evolution may send: "messages.upsert" or "MESSAGES_UPSERT" (-> "messages_upsert") depending on config/version.
-    const eventLower = (payload.event || "").toLowerCase().trim();
-    const isMessageUpsertEvent =
-      eventLower === "messages.upsert" ||
-      eventLower === "messages_upsert";
-
-    if (eventLower && !isMessageUpsertEvent) {
-      await auditWebhook(supabase, {
-        status: "ignored",
-        reason: "Not a message event",
-        event: payload.event,
-        instanceName: payload.instance,
-      });
+    if (!isMessageEvent) {
       return new Response(JSON.stringify({ status: "ignored", reason: "Not a message event" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -1709,12 +1447,6 @@ serve(async (req) => {
 
     const message = payload.data;
     if (!message?.key?.remoteJid) {
-      await auditWebhook(supabase, {
-        status: "ignored",
-        reason: "No message data",
-        event: payload.event,
-        instanceName: payload.instance,
-      });
       return new Response(JSON.stringify({ status: "ignored", reason: "No message data" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -1722,19 +1454,12 @@ serve(async (req) => {
 
     const instanceName = (payload.instance || "").trim();
     if (!instanceName) {
-      await auditWebhook(supabase, {
-        status: "ignored",
-        reason: "No instance name",
-        event: payload.event,
-      });
       return new Response(JSON.stringify({ status: "ignored", reason: "No instance name" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const remoteJid = message.key.remoteJid;
-    // Some providers send fromMe as string/number (e.g. "false"), which is truthy and would break ignore_own_messages.
-    // Normalize it safely to a real boolean.
     const fromMeRaw: unknown = (message.key as any).fromMe;
     const fromMe =
       fromMeRaw === true ||
@@ -1743,7 +1468,7 @@ serve(async (req) => {
       (typeof fromMeRaw === "string" && fromMeRaw.toLowerCase().trim() === "true");
     const pushName = message.pushName || "";
 
-    // Check for admin mode via URL param OR auto-detect by checking if seller is admin
+    // Check for admin mode
     let rawUrl = req.url;
     if (rawUrl.includes("%3F")) {
       rawUrl = rawUrl.replace(/%3F/g, "?").replace(/%26/g, "&").replace(/%3D/g, "=");
@@ -1756,65 +1481,34 @@ serve(async (req) => {
     }
     const isAdminModeParam = parsedUrl.searchParams.get("admin") === "true";
 
-    // Auto-detect admin: check if instance belongs to an admin user
-    // IMPORTANT: Only use admin chatbot if:
-    // 1. Instance name EXACTLY matches the global config admin instance (not partial match)
-    // 2. OR the instance belongs to an admin user in whatsapp_seller_instances
-    // Seller instances (e.g. seller_abc12345) should NEVER trigger admin mode
+    // Auto-detect admin instance
     let isAdminInstance = false;
     const currentInstanceLower = instanceName.toLowerCase().trim();
-    
-    // CRITICAL: Skip admin detection entirely for seller-prefixed instances
-    // This is the primary safeguard to separate Admin from Reseller instances
     const isSellerPrefixedInstance = currentInstanceLower.startsWith("seller_");
     
-    console.log(`[InstanceDetection] Starting detection for: "${instanceName}", isSellerPrefixed: ${isSellerPrefixedInstance}`);
-    
     if (!isAdminModeParam && !isSellerPrefixedInstance) {
-      // Check whatsapp_global_config to see if this is the admin's configured instance
-      const { data: globalCfg, error: globalCfgError } = await supabase
+      const { data: globalCfg } = await supabase
         .from("whatsapp_global_config")
         .select("instance_name, admin_user_id")
         .eq("is_active", true)
         .maybeSingle();
       
-      if (globalCfgError) {
-        console.log("[AdminDetection] Error fetching global config:", globalCfgError.message);
-      }
-      
-      // Strategy 1: Check if instance_name in global config matches exactly
       if (globalCfg?.instance_name) {
         const globalInstanceLower = globalCfg.instance_name.toLowerCase().trim();
-        
-        // STRICT: Only exact match (case-insensitive)
         if (globalInstanceLower === currentInstanceLower) {
           isAdminInstance = true;
-          console.log("[AutoDetect] ✓ Instance EXACTLY matches admin global config instance_name - using ADMIN chatbot mode");
-        } else {
-          console.log(`[AutoDetect] Instance "${currentInstanceLower}" does NOT match admin instance "${globalInstanceLower}"`);
         }
       }
       
-      // Strategy 2: If no instance_name set in global config, check if the instance belongs to an admin user
-      // by looking for whatsapp_seller_instance where seller has admin role AND instance matches
       if (!isAdminInstance && !globalCfg?.instance_name) {
-        console.log("[AdminDetection] No admin instance_name configured, checking user roles...");
-        
-        // Get all admin user IDs first
-        const { data: adminRoles, error: rolesError } = await supabase
+        const { data: adminRoles } = await supabase
           .from("user_roles")
           .select("user_id")
           .eq("role", "admin");
         
-        if (rolesError) {
-          console.log("[AdminDetection] Error fetching admin roles:", rolesError.message);
-        }
-        
         if (adminRoles && adminRoles.length > 0) {
           const adminUserIds = adminRoles.map(r => r.user_id);
-          console.log(`[AdminDetection] Found ${adminUserIds.length} admin user(s)`);
           
-          // Check if the instance belongs to any of these admins
           const { data: adminInstance } = await supabase
             .from("whatsapp_seller_instances")
             .select("seller_id, instance_name")
@@ -1824,25 +1518,15 @@ serve(async (req) => {
           
           if (adminInstance) {
             isAdminInstance = true;
-            console.log(`[AutoDetect] ✓ Instance "${instanceName}" belongs to admin user ${adminInstance.seller_id.substring(0, 8)}... - using ADMIN chatbot mode`);
-          } else {
-            console.log(`[AutoDetect] Instance "${instanceName}" does NOT belong to any admin user`);
           }
-        } else {
-          console.log("[AdminDetection] No admin users found in database");
         }
       }
     }
-    
-    console.log(`[InstanceDetection] FINAL RESULT - Instance: "${instanceName}", isSellerPrefixed: ${isSellerPrefixedInstance}, isAdmin: ${isAdminInstance}`);
 
     const isAdminMode = isAdminModeParam || isAdminInstance;
 
-    // If admin mode, process with admin chatbot logic
+    // Process admin chatbot
     if (isAdminMode) {
-      console.log("[AdminChatbot] Processing admin chatbot message (autoDetected:", isAdminInstance, ")");
-      
-      // Ignore own messages and groups
       if (fromMe || isGroupMessage(remoteJid)) {
         return new Response(JSON.stringify({ status: "ignored", reason: "Own message or group" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1858,7 +1542,6 @@ serve(async (req) => {
 
       const phone = extractPhone(remoteJid);
 
-      // Get global config for sending
       const { data: globalConfigData } = await supabase
         .from("whatsapp_global_config")
         .select("*")
@@ -1885,7 +1568,7 @@ serve(async (req) => {
       });
     }
     
-    // Get global config
+    // Get global config for reseller
     const { data: globalConfigData } = await supabase
       .from("whatsapp_global_config")
       .select("*")
@@ -1893,14 +1576,6 @@ serve(async (req) => {
       .maybeSingle();
     
     if (!globalConfigData) {
-      console.log("Global config not active");
-      await auditWebhook(supabase, {
-        status: "ignored",
-        reason: "API not active",
-        event: payload.event,
-        instanceName,
-        remoteJid,
-      });
       return new Response(JSON.stringify({ status: "ignored", reason: "API not active" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -1908,52 +1583,33 @@ serve(async (req) => {
     
     const globalConfig: GlobalConfig = globalConfigData;
     
-    // Find seller by instance name - robust matching strategy
+    // Find seller by instance - multiple strategies
     const instanceNameLower = instanceName.toLowerCase().trim();
     
-    console.log(`[SellerLookup] Searching for RESELLER instance: "${instanceName}"`);
-    
-    // Strategy 1: Exact match (case-insensitive) on instance_name
-    let { data: sellerInstance, error: exactMatchError } = await supabase
+    let { data: sellerInstance } = await supabase
       .from("whatsapp_seller_instances")
       .select("seller_id, is_connected, instance_blocked, instance_name, original_instance_name, plan_status")
       .ilike("instance_name", instanceName)
       .maybeSingle();
     
-    if (exactMatchError) {
-      console.log("[SellerLookup] Exact match error:", exactMatchError.message);
-    }
-    
-    if (sellerInstance) {
-      console.log(`[SellerLookup] ✓ Found by exact match: ${sellerInstance.instance_name}`);
-    }
-    
-    // Strategy 2: If instance name from webhook includes seller_ prefix, try extracting the ID
     if (!sellerInstance && instanceNameLower.startsWith("seller_")) {
-      console.log("[SellerLookup] Trying seller_ prefix matching...");
-      
       const { data: allInstances } = await supabase
         .from("whatsapp_seller_instances")
         .select("seller_id, is_connected, instance_blocked, instance_name, original_instance_name, plan_status");
       
       if (allInstances) {
-        // Find instance where seller_id starts with the extracted portion
         for (const inst of allInstances) {
           const expectedName = `seller_${inst.seller_id.replace(/-/g, '').substring(0, 8)}`;
           if (expectedName.toLowerCase() === instanceNameLower || 
               inst.instance_name?.toLowerCase() === instanceNameLower) {
             sellerInstance = inst;
-            console.log(`[SellerLookup] ✓ Found by seller_id derivation: ${inst.seller_id.substring(0, 8)}...`);
             break;
           }
         }
       }
     }
     
-    // Strategy 3: Try original_instance_name field
     if (!sellerInstance) {
-      console.log("[SellerLookup] Trying original_instance_name matching...");
-      
       const { data: byOriginal } = await supabase
         .from("whatsapp_seller_instances")
         .select("seller_id, is_connected, instance_blocked, instance_name, original_instance_name, plan_status")
@@ -1962,116 +1618,31 @@ serve(async (req) => {
       
       if (byOriginal) {
         sellerInstance = byOriginal;
-        console.log(`[SellerLookup] ✓ Found by original_instance_name: ${byOriginal.original_instance_name}`);
       }
     }
     
-    // Strategy 4: Partial match as last resort (be careful - only if no ambiguity)
     if (!sellerInstance) {
-      console.log("[SellerLookup] Trying partial match as last resort...");
-      
-      const { data: byPartial } = await supabase
-        .from("whatsapp_seller_instances")
-        .select("seller_id, is_connected, instance_blocked, instance_name, original_instance_name, plan_status")
-        .or(`instance_name.ilike.%${instanceNameLower}%,original_instance_name.ilike.%${instanceNameLower}%`);
-      
-      // Only use partial match if we get exactly 1 result (no ambiguity)
-      if (byPartial?.length === 1) {
-        sellerInstance = byPartial[0];
-        console.log(`[SellerLookup] ✓ Found by partial match (single result): ${sellerInstance.instance_name}`);
-      } else if (byPartial && byPartial.length > 1) {
-        console.log(`[SellerLookup] ✗ Partial match found ${byPartial.length} results - SKIPPING to avoid ambiguity`);
-      } else {
-        console.log("[SellerLookup] ✗ No matches found in any strategy");
-      }
-    }
-    
-    // Log detailed final result
-    console.log("[SellerLookup] FINAL RESULT:", JSON.stringify({
-      searchedFor: instanceName,
-      found: !!sellerInstance,
-      instanceName: sellerInstance?.instance_name || "N/A",
-      originalInstanceName: sellerInstance?.original_instance_name || "N/A",
-      sellerId: sellerInstance?.seller_id ? `${sellerInstance.seller_id.substring(0, 8)}...` : "N/A",
-      isBlocked: sellerInstance?.instance_blocked ?? "N/A",
-      planStatus: sellerInstance?.plan_status || "N/A",
-    }));
-    
-    if (!sellerInstance) {
-      console.log("Seller instance NOT FOUND for:", instanceName);
-      
-      // Log to system health for monitoring
-      await supabase.from("system_health_logs").insert({
-        component_name: "chatbot-webhook",
-        event_type: "instance_not_found",
-        severity: "warning",
-        message: `Instance "${instanceName}" not found in database`,
-        details: {
-          searchedInstanceName: instanceName,
-          remoteJid,
-          timestamp: new Date().toISOString(),
-        },
-      });
-      
-      await auditWebhook(supabase, {
-        status: "error",
-        reason: `Instance "${instanceName}" not found - check if reseller configured correctly`,
-        event: payload.event,
-        instanceName,
-        remoteJid,
-      });
-      
       return new Response(
         JSON.stringify({ 
           status: "error", 
           reason: "Instance not found",
-          help: "O revendedor precisa configurar a instância no painel primeiro",
           instanceSearched: instanceName,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     
-    // Check if blocked
     if (sellerInstance.instance_blocked) {
-      console.log("Seller instance BLOCKED:", sellerInstance.instance_name);
-      
-      await supabase.from("system_health_logs").insert({
-        component_name: "chatbot-webhook",
-        event_type: "instance_blocked",
-        severity: "info",
-        message: `Instance "${instanceName}" is blocked`,
-        details: {
-          instanceName: sellerInstance.instance_name,
-          planStatus: sellerInstance.plan_status,
-          remoteJid,
-        },
-      });
-      
-      await auditWebhook(supabase, {
-        status: "blocked",
-        reason: "Instance blocked due to plan status",
-        event: payload.event,
-        instanceName,
-        remoteJid,
-        sellerId: sellerInstance.seller_id,
-      });
-      
       return new Response(
         JSON.stringify({ 
           status: "blocked", 
           reason: "Instance blocked",
-          planStatus: sellerInstance.plan_status,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
     
-    // Check plan status
     if (sellerInstance.plan_status === "expired" || sellerInstance.plan_status === "suspended") {
-      console.log("Seller plan expired/suspended:", sellerInstance.plan_status);
-      
-      // Auto-block the instance
       await supabase
         .from("whatsapp_seller_instances")
         .update({
@@ -2081,22 +1652,10 @@ serve(async (req) => {
         })
         .eq("seller_id", sellerInstance.seller_id);
       
-      await supabase.from("system_health_logs").insert({
-        component_name: "chatbot-webhook",
-        event_type: "auto_blocked",
-        severity: "warning",
-        message: `Instance auto-blocked due to ${sellerInstance.plan_status} plan`,
-        details: {
-          sellerId: sellerInstance.seller_id,
-          instanceName: sellerInstance.instance_name,
-        },
-      });
-      
       return new Response(
         JSON.stringify({ 
           status: "blocked", 
           reason: `Plan ${sellerInstance.plan_status}`,
-          autoBlocked: true,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -2104,23 +1663,14 @@ serve(async (req) => {
     
     const sellerId = sellerInstance.seller_id;
     
-    // Get chatbot settings for this seller
-    const { data: settings, error: settingsError } = await supabase
+    // Get or create chatbot settings
+    const { data: settings } = await supabase
       .from("chatbot_settings")
       .select("*")
       .eq("seller_id", sellerId)
       .maybeSingle();
     
-    // Log settings status for debugging
-    console.log(`[Chatbot] Settings for seller ${sellerId}:`, JSON.stringify({
-      found: !!settings,
-      is_enabled: settings?.is_enabled,
-      settingsError: settingsError?.message,
-    }));
-    
-    // If no settings exist, create default enabled settings
     if (!settings) {
-      console.log(`[Chatbot] No settings found for seller ${sellerId}, creating default enabled settings`);
       await supabase
         .from("chatbot_settings")
         .insert({
@@ -2133,7 +1683,6 @@ serve(async (req) => {
     }
     
     const chatbotSettings: ChatbotSettings = {
-      // Default to true if no settings exist (auto-create enabled chatbot)
       is_enabled: settings?.is_enabled ?? true,
       response_delay_min: settings?.response_delay_min ?? 2,
       response_delay_max: settings?.response_delay_max ?? 5,
@@ -2145,40 +1694,27 @@ serve(async (req) => {
     };
     
     if (!chatbotSettings.is_enabled) {
-      console.log(`[Chatbot] Chatbot explicitly DISABLED for seller: ${sellerId} - User needs to enable it in settings`);
-      await auditWebhook(supabase, {
-        status: "ignored",
-        reason: "Chatbot disabled by user in settings",
-        event: payload.event,
-        instanceName,
-        remoteJid,
-        sellerId,
-      });
-      return new Response(JSON.stringify({ status: "ignored", reason: "Chatbot disabled - enable in Automação WhatsApp settings" }), {
+      return new Response(JSON.stringify({ status: "ignored", reason: "Chatbot disabled" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     
-    // Check if group message
+    // Ignore groups if configured
     if (chatbotSettings.ignore_groups && isGroupMessage(remoteJid)) {
-      console.log("Ignoring group message");
       return new Response(JSON.stringify({ status: "ignored", reason: "Group message" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     
-    // Check if own message
+    // Ignore own messages if configured
     if (chatbotSettings.ignore_own_messages && fromMe) {
-      console.log("Ignoring own message");
       return new Response(JSON.stringify({ status: "ignored", reason: "Own message" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     
-    // Extract message text
     const messageText = extractMessageText(message.message);
     if (!messageText) {
-      console.log("No text content (audio/video/sticker/empty)");
       return new Response(JSON.stringify({ status: "ignored", reason: "No text content" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -2196,178 +1732,133 @@ serve(async (req) => {
       .maybeSingle();
     
     if (!contact) {
-      // Check if this phone belongs to an existing client
-      const { data: existingClient } = await supabase
-        .from("clients")
-        .select("id")
-        .eq("seller_id", sellerId)
-        .ilike("phone", `%${phone.slice(-9)}%`)
-        .maybeSingle();
-      
-      const { data: newContact, error: insertError } = await supabase
+      const { data: newContact } = await supabase
         .from("chatbot_contacts")
         .insert({
           seller_id: sellerId,
           phone,
-          contact_status: existingClient ? "CLIENT" : "NEW",
-          client_id: existingClient?.id || null,
+          contact_status: "NEW",
           name: pushName,
+          first_interaction_at: now.toISOString(),
+          interaction_count: 0,
         })
         .select()
         .single();
-      
-      if (insertError) {
-        console.error("Error creating contact:", insertError);
-      }
       
       contact = newContact;
     }
     
     const contactStatus = contact?.contact_status || "NEW";
-    
-    // ===== CHECK FOR ACTIVE FLOW SESSION =====
+
+    // Check for active flow session
     const flowSession = await getFlowSession(supabase, sellerId, phone);
     
-    if (flowSession && !flowSession.awaiting_human) {
-      console.log("Active flow session found for contact");
+    if (flowSession && flowSession.is_active && !flowSession.awaiting_human) {
+      // Process flow
+      const { data: flowNodes } = await supabase
+        .from("chatbot_flow_nodes")
+        .select("*")
+        .eq("seller_id", sellerId)
+        .eq("is_active", true);
       
-      // Get main menu flow if no current flow
-      let currentFlowId = flowSession.current_flow_id;
-      if (!currentFlowId) {
-        const { data: mainFlow } = await supabase
-          .from("chatbot_flows")
-          .select("id")
-          .eq("seller_id", sellerId)
-          .eq("is_active", true)
-          .eq("is_main_menu", true)
-          .maybeSingle();
+      if (flowNodes && flowNodes.length > 0) {
+        const cleanMessage = messageText.trim();
         
-        if (mainFlow) {
-          currentFlowId = mainFlow.id;
-        }
-      }
-
-      if (currentFlowId) {
-        // Get all nodes for this flow
-        const { data: flowNodes } = await supabase
-          .from("chatbot_flow_nodes")
-          .select("*")
-          .eq("flow_id", currentFlowId)
-          .eq("seller_id", sellerId)
-          .eq("is_active", true)
-          .order("sort_order");
-
-        if (flowNodes && flowNodes.length > 0) {
-          const cleanMessage = messageText.trim();
+        // Check for back command
+        if (cleanMessage === "0" || cleanMessage.toLowerCase() === "voltar") {
+          const { data: mainFlow } = await supabase
+            .from("chatbot_flows")
+            .select("*")
+            .eq("seller_id", sellerId)
+            .eq("is_active", true)
+            .eq("is_main_menu", true)
+            .maybeSingle();
           
-          // Check for "voltar" or "0" to go back
-          if (cleanMessage === "0" || cleanMessage.toLowerCase() === "voltar") {
-            // Go back to parent or main menu
-            if (flowSession.current_node_id) {
-              const currentNode = flowNodes.find(n => n.id === flowSession.current_node_id);
+          if (mainFlow) {
+            const { data: rootNodes } = await supabase
+              .from("chatbot_flow_nodes")
+              .select("*")
+              .eq("flow_id", mainFlow.id)
+              .eq("seller_id", sellerId)
+              .eq("is_active", true)
+              .is("parent_node_id", null)
+              .order("sort_order");
+            
+            if (rootNodes && rootNodes.length > 0) {
+              const menuText = buildFlowMenuText(rootNodes as ChatbotFlowNode[]);
               
-              if (currentNode?.parent_node_id) {
-                // Go to parent node's level
-                const parentNode = flowNodes.find(n => n.id === currentNode.parent_node_id);
-                const siblings = flowNodes.filter(n => n.parent_node_id === parentNode?.parent_node_id);
-                const menuText = buildFlowMenuText(siblings.length > 0 ? siblings : flowNodes.filter(n => !n.parent_node_id));
-                
-                await supabase
-                  .from("chatbot_flow_sessions")
-                  .update({
-                    current_node_id: parentNode?.parent_node_id || null,
-                    last_interaction_at: new Date().toISOString(),
-                  })
-                  .eq("id", flowSession.id);
+              await supabase
+                .from("chatbot_flow_sessions")
+                .update({
+                  current_flow_id: mainFlow.id,
+                  current_node_id: null,
+                  last_interaction_at: now.toISOString(),
+                })
+                .eq("id", flowSession.id);
 
-                const sent = await sendTextMessage(globalConfig, instanceName, phone, menuText, supabase, sellerId);
-                
-                return new Response(
-                  JSON.stringify({ status: sent ? "sent" : "failed", type: "flow_back" }),
-                  { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-              }
+              const sent = await sendTextMessage(globalConfig, instanceName, phone, menuText, supabase, sellerId);
+              
+              return new Response(
+                JSON.stringify({ status: sent ? "sent" : "failed", type: "flow_main_menu" }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
             }
-            
-            // Go to main menu
-            const rootNodes = flowNodes.filter(n => !n.parent_node_id);
-            const menuText = buildFlowMenuText(rootNodes);
-            
-            await supabase
-              .from("chatbot_flow_sessions")
-              .update({
-                current_node_id: null,
-                last_interaction_at: new Date().toISOString(),
-              })
-              .eq("id", flowSession.id);
-
-            const sent = await sendTextMessage(globalConfig, instanceName, phone, menuText, supabase, sellerId);
-            
-            return new Response(
-              JSON.stringify({ status: sent ? "sent" : "failed", type: "flow_main_menu" }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
           }
+        }
 
-          // Find matching node for the option
-          const parentId = flowSession.current_node_id;
-          const matchedNode = findNodeByOption(flowNodes, cleanMessage, parentId);
+        const parentId = flowSession.current_node_id;
+        const matchedNode = findNodeByOption(flowNodes as ChatbotFlowNode[], cleanMessage, parentId);
 
-          if (matchedNode) {
-            const result = await processFlowNode(
-              supabase,
-              globalConfig,
-              instanceName,
-              phone,
-              matchedNode,
-              flowNodes,
-              flowSession,
-              sellerId,
-              chatbotSettings
-            );
+        if (matchedNode) {
+          const result = await processFlowNode(
+            supabase,
+            globalConfig,
+            instanceName,
+            phone,
+            matchedNode,
+            flowNodes as ChatbotFlowNode[],
+            flowSession,
+            sellerId,
+            chatbotSettings
+          );
 
-            // Log interaction
-            await supabase.from("chatbot_interactions").insert({
-              seller_id: sellerId,
-              contact_id: contact?.id,
-              phone,
-              incoming_message: messageText,
-              response_sent: matchedNode.response_content,
-              response_type: "flow_" + matchedNode.response_type,
-              was_blocked: false,
-            });
+          await supabase.from("chatbot_interactions").insert({
+            seller_id: sellerId,
+            contact_id: contact?.id,
+            phone,
+            incoming_message: messageText,
+            response_sent: matchedNode.response_content,
+            response_type: "flow_" + matchedNode.response_type,
+            was_blocked: false,
+          });
 
-            // Update contact interaction
+          if (contact?.id) {
             await supabase
               .from("chatbot_contacts")
               .update({
-                last_interaction_at: new Date().toISOString(),
+                last_interaction_at: now.toISOString(),
                 interaction_count: (contact?.interaction_count || 0) + 1,
               })
-              .eq("id", contact?.id);
-
-            return new Response(
-              JSON.stringify({
-                status: result.sent ? "sent" : "failed",
-                type: "flow_node",
-                node: matchedNode.title,
-                endSession: result.endSession,
-                awaitHuman: result.awaitHuman,
-              }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
+              .eq("id", contact.id);
           }
+
+          return new Response(
+            JSON.stringify({
+              status: result.sent ? "sent" : "failed",
+              type: "flow_node",
+              node: matchedNode.title,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
       }
     }
 
-    // ===== CHECK IF MESSAGE SHOULD START A NEW FLOW =====
-    // Check for keywords like "menu", "inicio", "opcoes" to start flow
+    // Check if should start new flow
     const flowTriggers = ["menu", "inicio", "início", "opcoes", "opções", "ajuda", "help", "#"];
     const shouldStartFlow = flowTriggers.some(t => messageText.toLowerCase().trim().includes(t));
 
     if (shouldStartFlow) {
-      // Get main menu flow
       const { data: mainFlow } = await supabase
         .from("chatbot_flows")
         .select("*")
@@ -2377,7 +1868,6 @@ serve(async (req) => {
         .maybeSingle();
 
       if (mainFlow) {
-        // Get root nodes
         const { data: rootNodes } = await supabase
           .from("chatbot_flow_nodes")
           .select("*")
@@ -2388,7 +1878,6 @@ serve(async (req) => {
           .order("sort_order");
 
         if (rootNodes && rootNodes.length > 0) {
-          // Create or update session
           if (flowSession) {
             await supabase
               .from("chatbot_flow_sessions")
@@ -2397,7 +1886,7 @@ serve(async (req) => {
                 current_node_id: null,
                 is_active: true,
                 awaiting_human: false,
-                last_interaction_at: new Date().toISOString(),
+                last_interaction_at: now.toISOString(),
               })
               .eq("id", flowSession.id);
           } else {
@@ -2411,7 +1900,6 @@ serve(async (req) => {
               });
           }
 
-          // Send menu
           const menuText = buildFlowMenuText(rootNodes as ChatbotFlowNode[], mainFlow.description ? mainFlow.description + "\n\n" : undefined);
           
           if (chatbotSettings.typing_enabled) {
@@ -2424,7 +1912,6 @@ serve(async (req) => {
           
           const sent = await sendTextMessage(globalConfig, instanceName, phone, menuText, supabase, sellerId);
 
-          // Log interaction
           await supabase.from("chatbot_interactions").insert({
             seller_id: sellerId,
             contact_id: contact?.id,
@@ -2443,8 +1930,7 @@ serve(async (req) => {
       }
     }
 
-    // ===== FALLBACK TO REGULAR RULES =====
-    // Get active rules for this seller
+    // Fallback to regular rules
     const { data: rules } = await supabase
       .from("chatbot_rules")
       .select("*")
@@ -2453,19 +1939,14 @@ serve(async (req) => {
       .order("priority", { ascending: false });
     
     if (!rules || rules.length === 0) {
-      console.log("No active rules for seller:", sellerId);
       return new Response(JSON.stringify({ status: "ignored", reason: "No rules configured" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     
-    // Find matching rule
     const matchingRule = findMatchingRule(rules, messageText, contactStatus);
     
     if (!matchingRule) {
-      console.log("No matching rule found for message:", messageText);
-      
-      // Log interaction even if no response
       await supabase.from("chatbot_interactions").insert({
         seller_id: sellerId,
         contact_id: contact?.id,
@@ -2480,13 +1961,9 @@ serve(async (req) => {
       });
     }
     
-    console.log("Matching rule found:", matchingRule.name);
-    
     // Check cooldown
     const cooldownCheck = canRespond(contact, matchingRule, now);
     if (!cooldownCheck.canSend) {
-      console.log("Cooldown active:", cooldownCheck.reason);
-      
       await supabase.from("chatbot_interactions").insert({
         seller_id: sellerId,
         contact_id: contact?.id,
@@ -2502,76 +1979,24 @@ serve(async (req) => {
       });
     }
     
-    // Check interactive content restrictions for free mode
+    // Handle free mode restrictions
     if (matchingRule.cooldown_mode === "free" && 
         (matchingRule.response_type === "text_buttons" || matchingRule.response_type === "text_list")) {
-      console.log("Free mode cannot send buttons/list");
-      
-      // Fallback to text only
       matchingRule.response_type = "text";
     }
     
-    // Check 24h limit for buttons/list
     if (!canSendInteractiveContent(contact, matchingRule.response_type, now)) {
-      console.log("Interactive content 24h limit reached");
-      
-      // Fallback to text only
       matchingRule.response_type = "text";
     }
 
-    // Validate API connection before sending
-    const connectionCheck = await validateApiConnection(globalConfig, instanceName);
-    if (!connectionCheck.connected) {
-      console.log("API connection validation failed:", connectionCheck.error);
-      
-      // Log the failure
-      await logSendAttempt(
-        supabase,
-        sellerId,
-        phone,
-        instanceName,
-        matchingRule.response_type,
-        false,
-        undefined,
-        undefined,
-        connectionCheck.error || "Instância desconectada"
-      );
-
-      // Update instance status
-      await supabase
-        .from("whatsapp_seller_instances")
-        .update({ is_connected: false })
-        .eq("seller_id", sellerId);
-
-      await auditWebhook(supabase, {
-        status: "failed",
-        reason: connectionCheck.error || "API disconnected",
-        event: payload.event,
-        instanceName,
-        remoteJid,
-        sellerId,
-      });
-
-      return new Response(
-        JSON.stringify({ 
-          status: "failed", 
-          reason: "API disconnected", 
-          error: connectionCheck.error 
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Send "typing" status if enabled
+    // Send typing if enabled
     if (chatbotSettings.typing_enabled) {
       const typingDuration = getRandomDelay(
         chatbotSettings.typing_duration_min,
         chatbotSettings.typing_duration_max
       );
-      console.log(`[Chatbot] Sending typing status for ${typingDuration}ms`);
       await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
     } else {
-      // Apply regular delay if typing is disabled
       const delay = getRandomDelay(
         chatbotSettings.response_delay_min,
         chatbotSettings.response_delay_max
@@ -2579,7 +2004,7 @@ serve(async (req) => {
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
     
-    // Send response based on type
+    // Send response
     let sent = false;
     const content = matchingRule.response_content;
     
@@ -2630,7 +2055,6 @@ serve(async (req) => {
     }
     
     if (sent) {
-      // Update contact
       const updateData: Record<string, unknown> = {
         last_interaction_at: now.toISOString(),
         last_response_at: now.toISOString(),
@@ -2638,12 +2062,10 @@ serve(async (req) => {
         name: pushName || contact?.name,
       };
       
-      // Update status from NEW to KNOWN after first response
       if (contactStatus === "NEW") {
         updateData.contact_status = "KNOWN";
       }
       
-      // Track interactive content sent time
       if (matchingRule.response_type === "text_buttons") {
         updateData.last_buttons_sent_at = now.toISOString();
       }
@@ -2658,7 +2080,6 @@ serve(async (req) => {
           .eq("id", contact.id);
       }
       
-      // Log interaction
       await supabase.from("chatbot_interactions").insert({
         seller_id: sellerId,
         contact_id: contact?.id,
@@ -2668,20 +2089,7 @@ serve(async (req) => {
         response_sent: content,
         response_type: matchingRule.response_type,
       });
-      
-      console.log("Response sent successfully");
     }
-    
-    await auditWebhook(supabase, {
-      status: sent ? "sent" : "failed",
-      reason: sent ? null : "Send API returned not ok",
-      event: payload.event,
-      instanceName,
-      remoteJid,
-      sellerId,
-      rule: matchingRule?.name,
-      type: matchingRule?.response_type,
-    });
 
     return new Response(
       JSON.stringify({

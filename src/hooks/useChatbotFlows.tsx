@@ -89,29 +89,47 @@ export function useChatbotFlows() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Build tree structure from flat nodes
-  const buildNodeTree = (flowId: string): ChatbotFlowNode[] => {
-    const flowNodes = nodes.filter(n => n.flow_id === flowId);
-    const nodeMap = new Map<string, ChatbotFlowNode>();
-    const rootNodes: ChatbotFlowNode[] = [];
-
-    // First pass: create map
-    flowNodes.forEach(node => {
-      nodeMap.set(node.id, { ...node, children: [] });
-    });
-
-    // Second pass: build tree
-    flowNodes.forEach(node => {
-      const nodeWithChildren = nodeMap.get(node.id)!;
-      if (node.parent_node_id && nodeMap.has(node.parent_node_id)) {
-        nodeMap.get(node.parent_node_id)!.children!.push(nodeWithChildren);
-      } else {
-        rootNodes.push(nodeWithChildren);
+  // Build tree structure from flat nodes - with guards against undefined
+  const buildNodeTree = useCallback((flowId: string): ChatbotFlowNode[] => {
+    if (!nodes || nodes.length === 0 || !flowId) {
+      return [];
+    }
+    
+    try {
+      const flowNodes = nodes.filter(n => n.flow_id === flowId);
+      if (flowNodes.length === 0) {
+        return [];
       }
-    });
+      
+      const nodeMap = new Map<string, ChatbotFlowNode>();
+      const rootNodes: ChatbotFlowNode[] = [];
 
-    return rootNodes.sort((a, b) => a.sort_order - b.sort_order);
-  };
+      // First pass: create map
+      flowNodes.forEach(node => {
+        nodeMap.set(node.id, { ...node, children: [] });
+      });
+
+      // Second pass: build tree - with null checks
+      flowNodes.forEach(node => {
+        const nodeWithChildren = nodeMap.get(node.id);
+        if (!nodeWithChildren) return;
+        
+        if (node.parent_node_id && nodeMap.has(node.parent_node_id)) {
+          const parentNode = nodeMap.get(node.parent_node_id);
+          if (parentNode && parentNode.children) {
+            parentNode.children.push(nodeWithChildren);
+          }
+        } else {
+          rootNodes.push(nodeWithChildren);
+        }
+      });
+
+      return rootNodes.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    } catch (error) {
+      console.error('[buildNodeTree] Error:', error);
+      return [];
+    }
+  }, [nodes]);
 
   const createFlow = async (flow: Omit<ChatbotFlow, 'id' | 'seller_id' | 'created_at' | 'updated_at'>) => {
     if (!user) return { error: 'Not authenticated' };
