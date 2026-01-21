@@ -559,6 +559,13 @@ async function processAdminChatbotMessage(
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
+    // Validate connection BEFORE sending
+    const connectionCheck = await validateApiConnection(globalConfig, instanceName);
+    if (!connectionCheck.connected) {
+      console.error("[AdminChatbot] Instance not connected:", connectionCheck.error);
+      // Log the error but don't block - try to send anyway
+    }
+
     // Send response (with image if provided)
     let sent = false;
     if (responseImageUrl) {
@@ -1125,6 +1132,8 @@ async function sendTextMessage(
     const formattedPhone = formatPhone(phone);
     const url = `${baseUrl}/message/sendText/${instanceName}`;
 
+    console.log(`[sendTextMessage] Sending to ${formattedPhone} via ${instanceName}`);
+
     const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
@@ -1138,6 +1147,11 @@ async function sendTextMessage(
     });
 
     const responseText = await response.text();
+    
+    // Log detailed error for 400
+    if (response.status === 400) {
+      console.error(`[sendTextMessage] BAD REQUEST (400) - Instance: ${instanceName}, Phone: ${formattedPhone}, Response: ${responseText}`);
+    }
     
     if (supabase && sellerId) {
       await logSendAttempt(
