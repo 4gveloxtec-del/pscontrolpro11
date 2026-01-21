@@ -2107,6 +2107,207 @@ export type Database = {
         }
         Relationships: []
       }
+      seller_chatbot_contacts: {
+        Row: {
+          created_at: string | null
+          current_node_key: string | null
+          id: string
+          interaction_count: number | null
+          last_interaction_at: string | null
+          last_response_at: string | null
+          name: string | null
+          phone: string
+          seller_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          current_node_key?: string | null
+          id?: string
+          interaction_count?: number | null
+          last_interaction_at?: string | null
+          last_response_at?: string | null
+          name?: string | null
+          phone: string
+          seller_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          current_node_key?: string | null
+          id?: string
+          interaction_count?: number | null
+          last_interaction_at?: string | null
+          last_response_at?: string | null
+          name?: string | null
+          phone?: string
+          seller_id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      seller_chatbot_keywords: {
+        Row: {
+          created_at: string | null
+          id: string
+          image_url: string | null
+          is_active: boolean | null
+          is_exact_match: boolean | null
+          keyword: string
+          response_text: string
+          seller_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          image_url?: string | null
+          is_active?: boolean | null
+          is_exact_match?: boolean | null
+          keyword: string
+          response_text: string
+          seller_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          image_url?: string | null
+          is_active?: boolean | null
+          is_exact_match?: boolean | null
+          keyword?: string
+          response_text?: string
+          seller_id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      seller_chatbot_menu: {
+        Row: {
+          content: string
+          created_at: string | null
+          icon: string | null
+          id: string
+          image_url: string | null
+          is_active: boolean | null
+          node_key: string
+          options: Json | null
+          parent_key: string | null
+          response_type: string | null
+          seller_id: string
+          sort_order: number | null
+          title: string
+          updated_at: string | null
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          icon?: string | null
+          id?: string
+          image_url?: string | null
+          is_active?: boolean | null
+          node_key: string
+          options?: Json | null
+          parent_key?: string | null
+          response_type?: string | null
+          seller_id: string
+          sort_order?: number | null
+          title: string
+          updated_at?: string | null
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          icon?: string | null
+          id?: string
+          image_url?: string | null
+          is_active?: boolean | null
+          node_key?: string
+          options?: Json | null
+          parent_key?: string | null
+          response_type?: string | null
+          seller_id?: string
+          sort_order?: number | null
+          title?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      seller_chatbot_settings: {
+        Row: {
+          created_at: string | null
+          delay_max: number | null
+          delay_min: number | null
+          id: string
+          menu_enabled: boolean | null
+          response_mode: string | null
+          seller_id: string
+          silent_mode: boolean | null
+          typing_enabled: boolean | null
+          updated_at: string | null
+          use_admin_menu: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          delay_max?: number | null
+          delay_min?: number | null
+          id?: string
+          menu_enabled?: boolean | null
+          response_mode?: string | null
+          seller_id: string
+          silent_mode?: boolean | null
+          typing_enabled?: boolean | null
+          updated_at?: string | null
+          use_admin_menu?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          delay_max?: number | null
+          delay_min?: number | null
+          id?: string
+          menu_enabled?: boolean | null
+          response_mode?: string | null
+          seller_id?: string
+          silent_mode?: boolean | null
+          typing_enabled?: boolean | null
+          updated_at?: string | null
+          use_admin_menu?: boolean | null
+        }
+        Relationships: []
+      }
+      seller_chatbot_variables: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          is_system: boolean | null
+          seller_id: string
+          updated_at: string | null
+          variable_key: string
+          variable_value: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_system?: boolean | null
+          seller_id: string
+          updated_at?: string | null
+          variable_key: string
+          variable_value?: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_system?: boolean | null
+          seller_id?: string
+          updated_at?: string | null
+          variable_key?: string
+          variable_value?: string
+        }
+        Relationships: []
+      }
       seller_queue_settings: {
         Row: {
           catch_up_completed: boolean | null
@@ -2838,6 +3039,10 @@ export type Database = {
         Returns: string
       }
       create_default_chatbot_categories: {
+        Args: { p_seller_id: string }
+        Returns: undefined
+      }
+      create_default_chatbot_variables: {
         Args: { p_seller_id: string }
         Returns: undefined
       }
