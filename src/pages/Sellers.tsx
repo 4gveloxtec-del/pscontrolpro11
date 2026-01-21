@@ -856,18 +856,7 @@ export default function Sellers() {
               >
                 {setUserRoleMutation.isPending ? 'Ajustando...' : 'Definir como Vendedor'}
               </Button>
-              <Button
-                variant="secondary"
-                disabled={!roleFixEmail || setUserRoleMutation.isPending}
-                onClick={() =>
-                  setUserRoleMutation.mutate({
-                    email: roleFixEmail,
-                    role: 'admin',
-                  })
-                }
-              >
-                Definir como ADM
-              </Button>
+              {/* Botão de criar ADM removido - apenas um administrador permitido (sandelrodrig@gmail.com) */}
             </div>
           </div>
         </CardContent>
